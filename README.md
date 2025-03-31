@@ -8,8 +8,6 @@ I Like Trains is a multiplayer game where players take on the role of train oper
 
 The student's objective will be to modify the agent.py file (and only this one) to remotely control a train managed by a server according to his environment.
 The agent must make travel decisions for the train, as well as the game board with the Pygam Library.
-The student will also have to edit the draw_passengers() and draw_trains() functions in client/renderer to display the passengers and trains.
-
 
 ## Setup Instructions
 
@@ -135,11 +133,11 @@ On the other hand, attributes can be added to the Agent class to store additiona
 
 ## Implementation Tasks
 
-As a student, you must implement two main components:
+As a student, you must implement:
 
-### 1. Intelligent Agent (agent.py)
+### 1. Agent (agent.py)
 
-You must implement an intelligent agent that controls your train. The main method to implement in `client/agent.py` is:
+You must implement an agent that controls your train. The main method to implement in `client/agent.py` is:
 
 ```python
 def get_direction(self, game_width, game_height):
@@ -161,36 +159,15 @@ You can use such following method ideas (these are examples, not mandatory):
 The agent can also call the method `self.network.send_drop_wagon_request()` to send a request to the server to drop a wagon.
 The train will then get a 0.25sec *1.5 speed boost and enter a 10sec boost cooldown. Calling this method will drop one wagon from the train (costing 1 point from the train's score).
 
-### 2. Graphical Rendering (renderer.py)
-
-You must implement the display of trains and passengers in the renderer. The two methods to implement are:
-
-```python
-def draw_trains(self):
-    """
-    Draws all trains and their wagons.
-    Tip: Use train_data["position"] to access a train's position
-    """
-
-def draw_passengers(self):
-    """
-    Draws all passengers on the grid.
-    Tip: Use passenger["position"] to access a passenger's position
-    """
-```
 
 ## Implementation Tips
 
-1. For the agent:
+For the agent:
    - Display the attributes in the logger to understand their structure (self.all_trains, self.all_passengers, self.delivery_zones, etc.).
    - Start with changing the direction if the next position will hit a wall.
    - Implement a simple strategy (e.g., go towards the closest passenger).
    - Gradually add obstacle avoidance (other trains and wagons).
    - Consider handling cases where the direct path is blocked.
-
-2. For the renderer:
-   - Ensure trains and passengers should be clearly visible.
-   - Each train has a color by default, consider using dark blue to display yours (override the color if the train is yours).
 
 ### Other tools in client.py
 
