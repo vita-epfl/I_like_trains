@@ -11,7 +11,11 @@ import os
 
 from game import Game
 from passenger import Passenger
-from ai_client import AIClient
+
+try:
+    from ai_client import AIClient
+except ImportError:
+    pass
 
 # Transfer frequency
 MAX_FREQUENCY = 30
