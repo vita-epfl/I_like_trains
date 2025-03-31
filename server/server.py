@@ -31,7 +31,7 @@ RIGHT = (1, 0)
 # Default host
 HOST = "localhost"
 ALLOW_MULTIPLE_CONNECTIONS = True
-DEFAULT_NB_PLAYERS_PER_ROOM = 0  # Default max players per room
+DEFAULT_NB_PLAYERS_PER_ROOM = 2  # Default max players per room
 
 # Scores file path
 SCORES_FILE_PATH = "player_scores.json"
@@ -47,7 +47,7 @@ AI_NAMES = [
 CLIENT_TIMEOUT = 1.0
 GAME_LIFE_TIME = 60*1  # 5 minutes
 
-# Check if an IP address has argued in argument
+# Check if an IP address has been supplied in argument
 if len(sys.argv) > 1:
     HOST = sys.argv[1]
 
@@ -436,17 +436,12 @@ class Server:
         self.ping_thread.start()
         
         # Get the number of players per room
-        while True:
+        while self.nb_players == 0:
             try:
-                player_input = input("Enter number of players per room: ").strip()
-                if not player_input:
-                    print("Please enter a valid number (minimum 1)")
-                    continue
-                self.nb_players = int(player_input)
-                if self.nb_players < 1:
+                player_input = int(input("Enter number of players per room: "))
+                if player_input < 1:
                     print("Number of players must be at least 1")
-                    continue
-                break
+                self.nb_players = player_input
             except ValueError:
                 print("Please enter a valid number (minimum 1)")
 
