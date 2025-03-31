@@ -2,6 +2,7 @@ import random
 import logging
 import time
 from abc import ABC, abstractmethod
+from network import NetworkManager
 
 # Configure logging
 logging.basicConfig(

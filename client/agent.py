@@ -1,6 +1,7 @@
 import random
 import logging
 from base_agent import BaseAgent
+from network import NetworkManager
 
 # Configure logging
 logging.basicConfig(
