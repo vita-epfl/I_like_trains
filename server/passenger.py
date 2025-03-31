@@ -1,6 +1,7 @@
 """
 Passenger class for the game "I Like Trains"
 """
+
 import random
 import logging
 
@@ -13,8 +14,8 @@ RED = (255, 0, 0)
 
 MAX_POINTS_VALUE = 3
 
-class Passenger:
 
+class Passenger:
     def __init__(self, game):
         self.game = game
         self.position = self.get_safe_spawn_position()
@@ -44,8 +45,15 @@ class Passenger:
                 * cell_size
             )
 
-            if x < 0 or x >= self.game.new_game_width or y < 0 or y >= self.game.new_game_height:
-                logger.error(f"Invalid spawn position: {(x, y)}, game dimensions: {self.game.new_game_width}x{self.game.new_game_height}")
+            if (
+                x < 0
+                or x >= self.game.new_game_width
+                or y < 0
+                or y >= self.game.new_game_height
+            ):
+                logger.error(
+                    f"Invalid spawn position: {(x, y)}, game dimensions: {self.game.new_game_width}x{self.game.new_game_height}"
+                )
                 continue
 
             position_is_safe = True
@@ -84,11 +92,8 @@ class Passenger:
         # Return random position
         return (
             random.randint(0, self.game.new_game_width // cell_size - 1) * cell_size,
-            random.randint(0, self.game.new_game_height // cell_size - 1) * cell_size
+            random.randint(0, self.game.new_game_height // cell_size - 1) * cell_size,
         )
 
     def to_dict(self):
-        return {
-            "position": self.position,
-            "value": self.value
-        }
+        return {"position": self.position, "value": self.value}

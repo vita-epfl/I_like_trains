@@ -1,6 +1,7 @@
 """
 Game class for the game "I Like Trains"
 """
+
 from pickle import FALSE
 import random
 import threading
@@ -29,9 +30,13 @@ ORIGINAL_GRID_NB = 20
 
 TRAINS_PASSENGER_RATIO = 1.0  # Number of trains per passenger
 
-GAME_SIZE_INCREMENT_RATIO = 0.05  # Increment per train, the bigger the number, the bigger the screen grows
-CELL_SIZE = int(ORIGINAL_GAME_WIDTH/ORIGINAL_GRID_NB)
-GAME_SIZE_INCREMENT = int(((ORIGINAL_GAME_WIDTH+ORIGINAL_GAME_HEIGHT)/2)*GAME_SIZE_INCREMENT_RATIO)  # Increment per train
+GAME_SIZE_INCREMENT_RATIO = (
+    0.05  # Increment per train, the bigger the number, the bigger the screen grows
+)
+CELL_SIZE = int(ORIGINAL_GAME_WIDTH / ORIGINAL_GRID_NB)
+GAME_SIZE_INCREMENT = int(
+    ((ORIGINAL_GAME_WIDTH + ORIGINAL_GAME_HEIGHT) / 2) * GAME_SIZE_INCREMENT_RATIO
+)  # Increment per train
 
 TICK_RATE = 60
 
@@ -42,6 +47,7 @@ RESPAWN_COOLDOWN = 5.0
 
 # Constant for wagon delivery cooldown time (in seconds)
 DELIVERY_COOLDOWN_TIME = 0.1  # Adjust this value to control delivery speed
+
 
 def generate_random_non_blue_color():
     """Generate a random RGB color avoiding blue nuances"""
@@ -54,6 +60,7 @@ def generate_random_non_blue_color():
         if r > b + 50 or g > b + 50:
             return (r, g, b)
 
+
 class Game:
     def __init__(self, send_cooldown_notification, nb_players):
         self.send_cooldown_notification = send_cooldown_notification
@@ -63,7 +70,9 @@ class Game:
         self.new_game_height = self.game_height
         self.cell_size = CELL_SIZE
         self.running = True
-        self.delivery_zone = DeliveryZone(self.game_width, self.game_height, self.cell_size, nb_players)
+        self.delivery_zone = DeliveryZone(
+            self.game_width, self.game_height, self.cell_size, nb_players
+        )
         self.trains = {}
         self.ai_clients = {}
         self.best_scores = {}
@@ -82,32 +91,32 @@ class Game:
             "size": True,
             "cell_size": True,
             "passengers": True,
-            "delivery_zone": True
+            "delivery_zone": True,
         }
         logger.info(f"Game initialized with tick rate: {TICK_RATE}")
 
     def get_state(self):
         """Return game state with only modified data"""
         state = {}
-        
+
         # Add game dimensions if modified
         if self._dirty["size"]:
             state["size"] = {
                 "game_width": self.game_width,
-                "game_height": self.game_height
+                "game_height": self.game_height,
             }
             self._dirty["size"] = False
-            
+
         # Add cell size if modified
         if self._dirty["cell_size"]:
             state["cell_size"] = self.cell_size
             self._dirty["cell_size"] = False
-            
+
         # Add passengers if modified
         if self._dirty["passengers"]:
             state["passengers"] = [p.to_dict() for p in self.passengers]
             self._dirty["passengers"] = False
-            
+
         # Add modified trains
         trains_data = {}
         for name, train in self.trains.items():
@@ -119,10 +128,10 @@ class Game:
         if self._dirty["delivery_zone"]:
             state["delivery_zone"] = self.delivery_zone.get_state()
             self._dirty["delivery_zone"] = False
-            
+
         if trains_data:
             state["trains"] = trains_data
-            
+
         return state
 
     def run(self):
@@ -130,6 +139,7 @@ class Game:
         while self.running:
             self.update()
             import time
+
             time.sleep(1 / TICK_RATE)
 
     def is_position_safe(self, x, y):
@@ -162,8 +172,10 @@ class Game:
         # Check delivery zone
         delivery_zone = self.delivery_zone
         if (
-            x > delivery_zone.x and x < delivery_zone.x + delivery_zone.width
-            and y > delivery_zone.y and y < delivery_zone.y + delivery_zone.height
+            x > delivery_zone.x
+            and x < delivery_zone.x + delivery_zone.width
+            and y > delivery_zone.y
+            and y < delivery_zone.y + delivery_zone.height
         ):
             return False
 
@@ -206,7 +218,9 @@ class Game:
     def update_passengers_count(self):
         """Update the number of passengers based on the number of trains"""
         # Calculate the desired number of passengers based on the number of alive trains
-        self.desired_passengers = (len([train for train in self.trains.values() if train.alive])) // TRAINS_PASSENGER_RATIO
+        self.desired_passengers = (
+            len([train for train in self.trains.values() if train.alive])
+        ) // TRAINS_PASSENGER_RATIO
 
         # Add or remove passengers if necessary
         changed = False
@@ -215,7 +229,7 @@ class Game:
             self.passengers.append(new_passenger)
             changed = True
             logger.debug("Added new passenger")
-            
+
         if changed:
             self._dirty["passengers"] = True
 
@@ -224,14 +238,18 @@ class Game:
         if not self.game_started:
             # Calculate initial game size based on number of clients
             self.game_width = ORIGINAL_GAME_WIDTH + (num_clients * GAME_SIZE_INCREMENT)
-            self.game_height = ORIGINAL_GAME_HEIGHT + (num_clients * GAME_SIZE_INCREMENT)
+            self.game_height = ORIGINAL_GAME_HEIGHT + (
+                num_clients * GAME_SIZE_INCREMENT
+            )
 
             self.new_game_width = self.game_width
             self.new_game_height = self.game_height
             self._dirty["size"] = True
             self._dirty["cell_size"] = True
             self.game_started = True
-            logger.info(f"Game started with size {self.game_width}x{self.game_height} for {num_clients} clients")
+            logger.info(
+                f"Game started with size {self.game_width}x{self.game_height} for {num_clients} clients"
+            )
 
     def add_train(self, agent_name):
         """Add a new train to the game"""
@@ -256,7 +274,13 @@ class Game:
             else:
                 train_color = generate_random_non_blue_color()
 
-            self.trains[agent_name] = Train(spawn_pos[0], spawn_pos[1], agent_name, train_color, self.handle_train_death)
+            self.trains[agent_name] = Train(
+                spawn_pos[0],
+                spawn_pos[1],
+                agent_name,
+                train_color,
+                self.handle_train_death,
+            )
             self.update_passengers_count()
             logger.info(f"Train {agent_name} spawned at position {spawn_pos}")
             return True
@@ -268,13 +292,13 @@ class Game:
             # Register the death time
             self.dead_trains[agent_name] = time.time()
             # logger.info(f"Train {agent_name} entered {RESPAWN_COOLDOWN}s cooldown")
-            
+
             # Clean up the last delivery time for this train
             if agent_name in self.last_delivery_times:
                 del self.last_delivery_times[agent_name]
 
             # Notify the client of the cooldown
-            self.send_cooldown_notification(agent_name, RESPAWN_COOLDOWN)     
+            self.send_cooldown_notification(agent_name, RESPAWN_COOLDOWN)
 
             # If the client is a bot
             if agent_name in self.ai_clients:
@@ -320,9 +344,9 @@ class Game:
             for passenger in self.passengers:
                 if train.position == passenger.position:
                     # Increase train score
-                    
+
                     train.add_wagons(nb_wagons=passenger.value)
-                    
+
                     desired_passengers = (len(self.trains)) // TRAINS_PASSENGER_RATIO
                     if len(self.passengers) <= desired_passengers:
                         passenger.respawn()
@@ -332,10 +356,16 @@ class Game:
                         self._dirty["passengers"] = True
 
             # Check for delivery zone collisions
-            if self.delivery_zone.is_position_in_delivery_zone(train.position[0], train.position[1]):
+            if self.delivery_zone.is_position_in_delivery_zone(
+                train.position[0], train.position[1]
+            ):
                 current_time = time.time()
                 # Check if enough time has passed since the last delivery for this train
-                if train.agent_name not in self.last_delivery_times or current_time - self.last_delivery_times.get(train.agent_name, 0) >= DELIVERY_COOLDOWN_TIME:
+                if (
+                    train.agent_name not in self.last_delivery_times
+                    or current_time - self.last_delivery_times.get(train.agent_name, 0)
+                    >= DELIVERY_COOLDOWN_TIME
+                ):
                     # Slowly popping wagons and increasing score
                     wagon = train.pop_wagon()
                     if wagon:
@@ -352,7 +382,7 @@ class Game:
         """Update game state"""
         if not self.trains:  # Update only if there are trains
             return
-        
+
         with self.lock:
             # Update all trains and check for death conditions
             # trains_to_remove = []

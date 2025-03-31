@@ -10,13 +10,20 @@ logging.basicConfig(
     handlers=[logging.FileHandler("game_debug.log"), logging.StreamHandler()],
 )
 
+
 class BaseAgent(ABC):
     """Base class for all agents, enforcing the implementation of get_direction()."""
-    
-    def __init__(self, agent_name: str, network: NetworkManager, logger: str="client.agent", is_dead: bool=True):
+
+    def __init__(
+        self,
+        agent_name: str,
+        network: NetworkManager,
+        logger: str = "client.agent",
+        is_dead: bool = True,
+    ):
         """
         Initialize the base agent. Not supposed to be modified.
-        
+
         Args:
             agent_name (str): The name of the agent
             network (NetworkManager): The network object to handle communication
@@ -51,7 +58,7 @@ class BaseAgent(ABC):
         self.all_trains = None
         self.passengers = None
         self.delivery_zone = None
-        
+
     @abstractmethod
     def get_direction(self):
         """

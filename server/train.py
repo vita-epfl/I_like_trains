@@ -1,6 +1,7 @@
 """
 Train class for the game "I Like Trains"
 """
+
 import logging
 from math import *
 
@@ -39,7 +40,6 @@ TICK_RATE = 60  # Ticks per second
 
 
 class Train:
-
     def __init__(self, x, y, agent_name, color, handle_train_death):
         self.position = (x, y)
         self.wagons = []
@@ -65,7 +65,7 @@ class Train:
             "alive": True,
             "speed": True,
             "speed_boost": True,
-            "boost_cooldown": True
+            "boost_cooldown": True,
         }
         # Use both server and client loggers
         logger = logging.getLogger("server.train")
@@ -87,7 +87,10 @@ class Train:
     def is_opposite_direction(self, new_direction):
         """Check if the new direction is opposite to the previous direction"""
         # logger.debug(f"Checking if {new_direction} is opposite to {self.direction}: {new_direction == self.get_opposite_direction(self.direction)}")
-        return new_direction[0] == -self.direction[0] and new_direction[1] == -self.direction[1]
+        return (
+            new_direction[0] == -self.direction[0]
+            and new_direction[1] == -self.direction[1]
+        )
 
     def change_direction(self, new_direction):
         """Change the train's direction if possible"""
@@ -102,20 +105,22 @@ class Train:
 
         # Manage speed boost timer
         if self.speed_boost_active:
-            self.speed_boost_timer -= 1/TICK_RATE  # Decrement by seconds (assuming TICK_RATE ticks per second)
+            self.speed_boost_timer -= (
+                1 / TICK_RATE
+            )  # Decrement by seconds (assuming TICK_RATE ticks per second)
             if self.speed_boost_timer <= 0:
                 # Reset speed boost
                 self.speed_boost_active = False
                 self.speed = self.normal_speed
                 self._dirty["speed"] = True
-                
+
                 # Start cooldown
                 self.boost_cooldown_active = True
                 self.boost_cooldown_timer = BOOST_COOLDOWN_DURATION
-        
+
         # Manage boost cooldown timer
         if self.boost_cooldown_active:
-            self.boost_cooldown_timer -= 1/TICK_RATE  # Decrement by seconds
+            self.boost_cooldown_timer -= 1 / TICK_RATE  # Decrement by seconds
             if self.boost_cooldown_timer <= 0:
                 # Reset cooldown
                 self.boost_cooldown_active = False
@@ -141,7 +146,7 @@ class Train:
             # make it dirty
             self._dirty["wagons"] = True
             return self.wagons.pop()
-        
+
         return None
 
     def clear_wagons(self):
@@ -153,9 +158,14 @@ class Train:
         """Drop the last wagon from the train and return its position"""
         if not self.alive:
             return None
-        
+
         # Apply speed boost if enabled and not in cooldown
-        if ACTIVATE_SPEED_BOOST and not self.boost_cooldown_active and not self.speed_boost_active and len(self.wagons) > 1:
+        if (
+            ACTIVATE_SPEED_BOOST
+            and not self.boost_cooldown_active
+            and not self.speed_boost_active
+            and len(self.wagons) > 1
+        ):
             logger.debug(f"Applying speed boost to train {self.agent_name}")
             # Get the last wagon position
             last_wagon_pos = self.wagons[-1]
@@ -170,14 +180,14 @@ class Train:
             self.speed_boost_active = True
             self.speed_boost_timer = BOOST_DURATION  # 1 second boost
             self._dirty["speed"] = True
-            
+
             return last_wagon_pos
         else:
             return None
 
     def update_speed(self):
         self.speed = INITIAL_SPEED * SPEED_DECREMENT_COEFFICIENT ** len(self.wagons)
-        self._dirty["speed"] = True 
+        self._dirty["speed"] = True
 
     def move(self, trains, screen_width, screen_height, cell_size):
         """Regular interval movement"""
@@ -185,24 +195,25 @@ class Train:
             return
 
         # logger.debug(f"Moving train {self.agent_name} from {self.position} in direction {self.direction}")
-        
+
         # Save the last position before moving
         if isinstance(self.position, tuple) and len(self.position) == 2:
             self.last_position = self.position
         else:
-            logger.warning(f"Invalid position for train {self.agent_name} before move: {self.position}")
+            logger.warning(
+                f"Invalid position for train {self.agent_name} before move: {self.position}"
+            )
             self.last_position = (0, 0)
-            
+
         # Calculate new position
         new_x = self.position[0] + self.direction[0] * cell_size
         new_y = self.position[1] + self.direction[1] * cell_size
         new_position = (new_x, new_y)
         # logger.debug(f"New position for train {self.agent_name}: {new_position}")
-        
+
         # Check collisions and bounds
-        if (
-            self.check_collisions(new_position, trains)
-            or self.check_out_of_bounds(new_position, screen_width, screen_height)
+        if self.check_collisions(new_position, trains) or self.check_out_of_bounds(
+            new_position, screen_width, screen_height
         ):
             self.set_alive(False)
             self.handle_death(self.agent_name)
@@ -216,7 +227,7 @@ class Train:
             self.wagons.pop()
             self._dirty["wagons"] = True
         # logger.debug(f"New wagons for train {self.agent_name}: {self.wagons}")
-        
+
         # Update position
         # logger.debug(f"Moving train to {new_position} in direction {self.direction}")
         self.set_position(new_position)
@@ -247,11 +258,18 @@ class Train:
             # logger.debug(f"Converting wagons to dict for train {self.agent_name}, current wagons: {self.wagons}")
             valid_wagons = []
             for wagon in self.wagons:
-                if (wagon is not None and isinstance(wagon, tuple) and len(wagon) == 2 and 
-                    isinstance(wagon[0], int) and isinstance(wagon[1], int)):
+                if (
+                    wagon is not None
+                    and isinstance(wagon, tuple)
+                    and len(wagon) == 2
+                    and isinstance(wagon[0], int)
+                    and isinstance(wagon[1], int)
+                ):
                     valid_wagons.append(wagon)
                 else:
-                    logger.warning(f"Invalid wagon found in to_dict for train {self.agent_name}: {wagon}, skipping")
+                    logger.warning(
+                        f"Invalid wagon found in to_dict for train {self.agent_name}: {wagon}, skipping"
+                    )
             data["wagons"] = valid_wagons
             # logger.debug(f"Valid wagons for train {self.agent_name}: {valid_wagons}")
             self._dirty["wagons"] = False
@@ -271,7 +289,7 @@ class Train:
         if self._dirty["speed"]:
             data["speed"] = self.speed
             self._dirty["speed"] = False
-        
+
         return data
 
     def set_position(self, new_position):
@@ -364,5 +382,5 @@ class Train:
             "alive": True,
             "speed": True,
             "speed_boost": True,
-            "boost_cooldown": True
+            "boost_cooldown": True,
         }

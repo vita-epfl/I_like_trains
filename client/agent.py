@@ -11,13 +11,20 @@ logging.basicConfig(
 
 BASE_DIRECTIONS = [
     (0, -1),  # Up
-    (1, 0),   # Right
-    (0, 1),   # Down
-    (-1, 0)   # Left
+    (1, 0),  # Right
+    (0, 1),  # Down
+    (-1, 0),  # Left
 ]
 
+
 class Agent(BaseAgent):
-    def __init__(self, agent_name: str, network: NetworkManager, logger: str="client.agent", is_dead: bool=True):
+    def __init__(
+        self,
+        agent_name: str,
+        network: NetworkManager,
+        logger: str = "client.agent",
+        is_dead: bool = True,
+    ):
         """
         Initialize the agent
         Args:
@@ -44,9 +51,7 @@ class Agent(BaseAgent):
     # Method ideas (can be removed or completed)
     # =========================================
 
-    def will_hit_wall(
-        self, position: tuple, direction: tuple
-    ):
+    def will_hit_wall(self, position: tuple, direction: tuple):
         """
         Check if the next position will hit a wall
         Args:
@@ -65,7 +70,9 @@ class Agent(BaseAgent):
         """Find the adapted target and return its position"""
         return
 
-    def get_direction_to_target(self, current_position: tuple, target_position: tuple, valid_directions: list):
+    def get_direction_to_target(
+        self, current_position: tuple, target_position: tuple, valid_directions: list
+    ):
         """Determine the best direction among the valid ones to reach the target the fastest"""
         return
 
