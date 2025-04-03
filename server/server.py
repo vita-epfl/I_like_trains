@@ -9,9 +9,9 @@ import random
 import os
 import signal
 
-from passenger import Passenger
-from ai_client import AIClient
-from room import Room, load_best_scores, WAITING_TIME_BEFORE_BOTS
+from server.passenger import Passenger
+from server.ai_client import AIClient
+from server.room import Room, load_best_scores, WAITING_TIME_BEFORE_BOTS
 
 
 # Colors
@@ -150,7 +150,7 @@ def display_high_scores(scores, limit=10):
 
 
 class Server:
-    def __init__(self):
+    def __init__(self, players_per_room=0):
         self.rooms = {}  # {room_id: Room}
         self.lock = threading.Lock()
 
@@ -171,7 +171,11 @@ class Server:
             raise
 
         self.running = True
-        self.nb_players = DEFAULT_NB_PLAYERS_PER_ROOM
+        # TODO(alok): move DEFAULT_NB_PLAYERS_PER_ROOM to config.json
+        if players_per_room > 0:
+            self.nb_players = players_per_room
+        else:
+            self.nb_players = DEFAULT_NB_PLAYERS_PER_ROOM
         self.addr_to_name = {}  # Maps client addresses to agent names
         self.addr_to_sciper = {}  # Maps client addresses to scipers
         self.sciper_to_addr = {}  # Maps scipers to client addresses
@@ -1152,9 +1156,3 @@ class Server:
 
         logger.info("Server shutdown complete")
         # No sys.exit(0) here, allow the function to return naturally
-
-
-if __name__ == "__main__":
-    server = Server()
-    # Main server loop
-    server.run_game()

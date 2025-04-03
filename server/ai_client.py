@@ -6,13 +6,7 @@ This module provides an AI client that can control trains on the server side
 import threading
 import time
 import logging
-import sys
-import os
-
-# Add the client directory to the path so we can import the Agent class
-sys.path.append(os.path.join(os.path.dirname(os.path.dirname(__file__)), "client"))
-# Import Agent from client directory
-from agent import Agent
+from client.agent import Agent
 
 logger = logging.getLogger("server.ai_client")
 

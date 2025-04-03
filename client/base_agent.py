@@ -1,6 +1,6 @@
 import logging
 import time
-from network import NetworkManager
+from client.network import NetworkManager
 
 # Configure logging
 logging.basicConfig(
