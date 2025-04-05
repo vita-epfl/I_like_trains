@@ -4,53 +4,12 @@ import threading
 import time
 import json
 import logging
-import os
 
 # Configure logger
 logger = logging.getLogger("server.room")
 
-# Scores file path
-SCORES_FILE_PATH = "player_scores.json"
-
 # Transfer tick rate
 TICK_RATE = 30
-
-
-def update_best_score(player_sciper, score, scores_dict):
-    """Update player's best score if the new score is higher"""
-    # Use sciper as the unique identifier for scores
-    if player_sciper in scores_dict:
-        if score > scores_dict[player_sciper]:
-            scores_dict[player_sciper] = score
-            return True
-    else:
-        scores_dict[player_sciper] = score
-        return True
-    return False
-
-
-def save_scores(scores):
-    """Save player scores to file"""
-    try:
-        with open(SCORES_FILE_PATH, "w") as f:
-            json.dump(scores, f, indent=4)
-    except Exception as e:
-        logger.error(f"Error saving scores to file: {e}")
-
-
-def load_best_scores():
-    """Load player scores from file"""
-    if os.path.exists(SCORES_FILE_PATH):
-        try:
-            with open(SCORES_FILE_PATH, "r") as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            logger.error("Error decoding scores file. Creating a new one.")
-            return {}
-        except Exception as e:
-            logger.error(f"Error loading scores file: {e}")
-            return {}
-    return {}
 
 
 class Room:
@@ -147,7 +106,6 @@ class Room:
 
         # Collect final scores
         final_scores = []
-        scores_dict = self.game.server.best_scores
         scores_updated = False
 
         for train_name, best_score in self.game.best_scores.items():
@@ -169,7 +127,7 @@ class Room:
 
             # Update best score in the scores file if we have a valid sciper
             if player_sciper:
-                if update_best_score(player_sciper, best_score, scores_dict):
+                if self.game.server.high_score.update(player_sciper, best_score):
                     scores_updated = True
                     logger.info(
                         f"Updated best score for {train_name} (sciper: {player_sciper}): {best_score}"
@@ -177,7 +135,7 @@ class Room:
 
         # Save scores if any were updated
         if scores_updated:
-            save_scores(scores_dict)
+            self.game.server.high_score.save()
 
         # Sort scores in descending order
         final_scores.sort(key=lambda x: x["best_score"], reverse=True)
@@ -189,7 +147,7 @@ class Room:
                 "message": "Game is over. Time limit reached.",
                 "final_scores": final_scores,
                 "duration": self.config.game_duration_seconds,
-                "best_scores": scores_dict,
+                "best_scores": self.game.server.high_score.get(),
             },
         }
 

@@ -8,9 +8,10 @@ import random
 import signal
 
 from common.config import Config
+from server.high_score import HighScore
 from server.passenger import Passenger
 from server.ai_client import AIClient
-from server.room import Room, load_best_scores
+from server.room import Room
 
 
 # Colors
@@ -93,32 +94,15 @@ def setup_server_logger():
 logger = setup_server_logger()
 
 
-def display_high_scores(scores, limit=10):
-    """Display the current high scores"""
-    if not scores:
-        logger.info("No high scores available yet")
-        return
-
-    # Sort scores in descending order
-    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-
-    logger.info("===== HIGH SCORES =====")
-    for i, (player, score) in enumerate(sorted_scores[:limit], 1):
-        logger.info(f"{i}. {player}: {score}")
-    logger.info("======================")
-
-
 class Server:
     def __init__(self, config: Config):
         self.config = config.server
         self.rooms = {}  # {room_id: Room}
         self.lock = threading.Lock()
 
-        # Load player scores from file
-        self.best_scores = load_best_scores()
-
-        # Display high scores
-        display_high_scores(self.best_scores)
+        self.high_score = HighScore()
+        self.high_score.load()
+        self.high_score.dump()
 
         # Create UDP socket with proper error handling
         try:
