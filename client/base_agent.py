@@ -1,6 +1,7 @@
 import logging
 import time
 from client.network import NetworkManager
+from common import move
 
 # Configure logging
 logging.basicConfig(
@@ -9,16 +10,9 @@ logging.basicConfig(
     handlers=[logging.FileHandler("game_debug.log"), logging.StreamHandler()],
 )
 
-BASE_DIRECTIONS = [
-    (0, -1),  # Up
-    (1, 0),  # Right
-    (0, 1),  # Down
-    (-1, 0),  # Left
-]
-
 
 class BaseAgent:
-    """Base class for all agents, enforcing the implementation of get_direction()."""
+    """Base class for all agents, enforcing the implementation of get_move()."""
 
     def __init__(
         self,
@@ -65,10 +59,10 @@ class BaseAgent:
         self.passengers = None
         self.delivery_zone = None
 
-    def get_direction(self):
+    def get_move(self):
         """
         Abstract method to be implemented by subclasses.
-        Must return a valid movement direction.
+        Must return a valid move.Move.
         """
         pass
 
@@ -78,15 +72,13 @@ class BaseAgent:
         Example of how to access the elements of the game state:
         """
         if not self.is_dead:
-            try:
-                new_direction = self.get_direction()
+            new_direction = self.get_move()
+            if new_direction not in move.Move:
+                # Not doing anything is akin to keep moving forward
+                return
 
-                # Check if the direction is in the base directions
-                if new_direction not in BASE_DIRECTIONS:
-                    return
+            if new_direction == move.Move.DROP:
+                self.network.send_drop_wagon_request()
 
-                # Check if the direction is different from the current direction
-                if new_direction != self.all_trains[self.agent_name]["direction"]:
-                    self.network.send_direction_change(new_direction)
-            except Exception as e:
-                self.logger.error(f"Error making agent decision: {e}")
+            if new_direction != self.all_trains[self.agent_name]["direction"]:
+                self.network.send_direction_change(new_direction)

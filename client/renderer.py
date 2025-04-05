@@ -6,6 +6,8 @@ import pygame
 import logging
 import time
 
+from common.move import Move
+
 # Configure logger
 logger = logging.getLogger("client.renderer")
 
@@ -214,7 +216,7 @@ class Renderer:
             train_x += self.client.game_screen_padding
             train_y += self.client.game_screen_padding
             train_wagons = train_data.get("wagons", [])
-            train_direction = train_data.get("direction", (1, 0))
+            train_direction = train_data.get("direction", Move.RIGHT)
             train_color = train_data.get("color", (0, 255, 0))
             train_wagon_color = tuple(
                 min(c + 50, 255) for c in train_color
