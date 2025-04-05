@@ -6,6 +6,7 @@ import random
 import threading
 import time
 
+from common.server_config import ServerConfig
 from server.train import Train
 from server.passenger import Passenger
 import logging
@@ -37,12 +38,8 @@ GAME_SIZE_INCREMENT = int(
     ((ORIGINAL_GAME_WIDTH + ORIGINAL_GAME_HEIGHT) / 2) * GAME_SIZE_INCREMENT_RATIO
 )  # Increment per train
 
-TICK_RATE = 60
-
 SPAWN_SAFE_ZONE = 3
 SAFE_PADDING = 3
-
-RESPAWN_COOLDOWN = 5.0
 
 # Constant for wagon delivery cooldown time (in seconds)
 DELIVERY_COOLDOWN_TIME = 0.1  # Adjust this value to control delivery speed
@@ -61,7 +58,9 @@ def generate_random_non_blue_color():
 
 
 class Game:
-    def __init__(self, send_cooldown_notification, nb_players):
+    # TODO(alok): remove nb_players and use config.players_per_room
+    def __init__(self, config: ServerConfig, send_cooldown_notification, nb_players):
+        self.config = config
         self.send_cooldown_notification = send_cooldown_notification
         self.game_width = ORIGINAL_GAME_WIDTH
         self.game_height = ORIGINAL_GAME_HEIGHT
@@ -92,7 +91,7 @@ class Game:
             "passengers": True,
             "delivery_zone": True,
         }
-        logger.info(f"Game initialized with tick rate: {TICK_RATE}")
+        logger.info(f"Game initialized with tick rate: {self.config.tick_rate}")
 
     def get_state(self):
         """Return game state with only modified data"""
@@ -137,9 +136,7 @@ class Game:
         logger.info("Game loop started")
         while self.running:
             self.update()
-            import time
-
-            time.sleep(1 / TICK_RATE)
+            time.sleep(1 / self.config.tick_rate)
 
     def is_position_safe(self, x, y):
         """Check if a position is safe for spawning"""
@@ -254,9 +251,9 @@ class Game:
         # Check the cooldown
         if agent_name in self.dead_trains:
             elapsed = time.time() - self.dead_trains[agent_name]
-            if elapsed < RESPAWN_COOLDOWN:
+            if elapsed < self.config.respawn_cooldown_seconds:
                 logger.debug(
-                    f"Train {agent_name} still in cooldown for {RESPAWN_COOLDOWN - elapsed:.1f}s"
+                    f"Train {agent_name} still in cooldown for {self.config.respawn_cooldown_seconds - elapsed:.1f}s"
                 )
                 return False
             else:
@@ -277,7 +274,7 @@ class Game:
                 agent_name,
                 train_color,
                 self.handle_train_death,
-                TICK_RATE,
+                self.config.tick_rate,
             )
             self.update_passengers_count()
             return True
@@ -294,7 +291,9 @@ class Game:
                 del self.last_delivery_times[agent_name]
 
             # Notify the client of the cooldown
-            self.send_cooldown_notification(agent_name, RESPAWN_COOLDOWN)
+            self.send_cooldown_notification(
+                agent_name, self.config.respawn_cooldown_seconds
+            )
 
             # If the client is a bot
             if agent_name in self.ai_clients:
@@ -304,7 +303,7 @@ class Game:
                 client.agent.is_dead = True
                 client.agent.death_time = time.time()
                 client.agent.waiting_for_respawn = True
-                client.agent.respawn_cooldown = RESPAWN_COOLDOWN
+                client.agent.respawn_cooldown = self.config.respawn_cooldown_seconds
         else:
             logger.error(f"Train {agent_name} not found in game")
             return False
@@ -317,7 +316,7 @@ class Game:
         """Get remaining cooldown time for a train"""
         if agent_name in self.dead_trains:
             elapsed = time.time() - self.dead_trains[agent_name]
-            remaining = max(0, RESPAWN_COOLDOWN - elapsed)
+            remaining = max(0, self.config.respawn_cooldown_seconds - elapsed)
             return remaining
         return 0
 

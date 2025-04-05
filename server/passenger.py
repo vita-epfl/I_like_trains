@@ -1,41 +1,36 @@
-"""
-Passenger class for the game "I Like Trains"
-"""
-
 import random
 import logging
-
 
 # Configure logging
 logger = logging.getLogger("server.passenger")
 
-# Colors
-RED = (255, 0, 0)
-
-MAX_POINTS_VALUE = 3
-
 
 class Passenger:
+    # TODO(Alok): Passenger should not depend on game -- we have a circular dependency indicative of a structural issue.
     def __init__(self, game):
         self.game = game
         self.position = self.get_safe_spawn_position()
-        self.value = random.randint(1, MAX_POINTS_VALUE)
+        self.value = random.randint(1, self.game.config.max_passengers)
 
     def respawn(self):
-        """Respawn the passenger at a random position"""
+        """
+        Respawn the passenger at a random position.
+        """
         new_pos = self.get_safe_spawn_position()
-        if new_pos != self.position:
-            self.position = new_pos
-            self.value = random.randint(1, MAX_POINTS_VALUE)
-            self.game._dirty["passengers"] = True
+        self.position = new_pos
+        self.value = random.randint(1, self.game.config.max_passengers)
+        self.game._dirty["passengers"] = True
 
     def get_safe_spawn_position(self):
-        """Find a safe spawn position, far from trains and other passengers"""
+        """
+        Find a safe spawn position, far from trains and other passengers.
+        If no safe position can be found after a large number of attempts, we'll
+        return a random position (potentially on top of an existing train, passenger, or delivery zone).
+        """
         max_attempts = 200
         cell_size = self.game.cell_size
 
         for _ in range(max_attempts):
-            # Position aligned on the grid
             x = (
                 random.randint(0, (self.game.new_game_width // cell_size) - 1)
                 * cell_size
@@ -56,44 +51,35 @@ class Passenger:
                 )
                 continue
 
-            position_is_safe = True
+            pos = (x, y)
+            if self.is_safe_position(pos):
+                return pos
 
-            # Check collision with trains and their wagons
-            for train in self.game.trains.values():
-                if (x, y) == train.position:
-                    position_is_safe = False
-                    break
-
-                for wagon_pos in train.wagons:
-                    if (x, y) == wagon_pos:
-                        position_is_safe = False
-                        break
-
-                if not position_is_safe:
-                    break
-
-            # Check collision with other passengers
-            for passenger in self.game.passengers:
-                if passenger != self and (x, y) == passenger.position:
-                    position_is_safe = False
-                    break
-
-            # Check collision with delivery zone
-            delivery_zone = self.game.delivery_zone
-            if delivery_zone.contains((x, y)):
-                position_is_safe = False
-                break
-
-            if position_is_safe:
-                return (x, y)
-
-        # Default position if no safe position is found
+        # Return a random position if no safe position is found
         logger.warning("No safe position found for passenger spawn")
-        # Return random position
-        return (
-            random.randint(0, self.game.new_game_width // cell_size - 1) * cell_size,
-            random.randint(0, self.game.new_game_height // cell_size - 1) * cell_size,
-        )
+        return pos
+
+    def is_safe_position(self, pos):
+        # Check collision with trains and their wagons
+        for train in self.game.trains.values():
+            if pos == train.position:
+                return False
+
+            for wagon_pos in train.wagons:
+                if pos == wagon_pos:
+                    return False
+
+        # Check collision with other passengers
+        for passenger in self.game.passengers:
+            if passenger != self and pos == passenger.position:
+                return False
+
+        # Check collision with delivery zone
+        delivery_zone = self.game.delivery_zone
+        if delivery_zone.contains(pos):
+            return False
+
+        return True
 
     def to_dict(self):
         return {"position": self.position, "value": self.value}

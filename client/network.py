@@ -30,12 +30,7 @@ class NetworkManager:
         self.socket = None
         self.running = True
         self.receive_thread = None
-
-        # Variables pour surveiller les pings du serveur
         self.last_ping_time = 0
-        self.server_timeout = (
-            2.0  # Temps après lequel on considère le serveur comme déconnecté
-        )
 
     def connect(self):
         """Establish connection with server"""
@@ -50,7 +45,6 @@ class NetworkManager:
             self.server_addr = (self.host, self.port)
             logger.info(f"UDP socket created for server at {self.host}:{self.port}")
 
-            # Initialiser le temps du dernier ping
             self.last_ping_time = time.time()
 
             # Start receive thread
@@ -139,9 +133,12 @@ class NetworkManager:
 
                 # Vérifier si on a reçu un ping récemment
                 current_time = time.time()
-                if current_time - self.last_ping_time > self.server_timeout:
+                if (
+                    current_time - self.last_ping_time
+                    > self.client.config.server_timeout_seconds
+                ):
                     logger.warning(
-                        f"Server hasn't sent a ping for {self.server_timeout} seconds, disconnecting"
+                        f"Server hasn't sent a ping for {self.client.config.server_timeout_seconds} seconds, disconnecting"
                     )
                     # Déconnecter le client
                     self.disconnect(stop_client=True)

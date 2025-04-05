@@ -7,6 +7,12 @@ logger = logging.getLogger("server.delivery_zone")
 
 
 class DeliveryZone:
+    """
+    Represents the area where passengers must be dropped off in order to earn points.
+
+    DeliveryZones are placed randomly. Their size depends on the number of players.
+    """
+
     def __init__(self, game_width, game_height, cell_size, nb_players):
         initial_width = 2
         initial_height = 2

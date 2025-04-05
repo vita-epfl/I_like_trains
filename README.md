@@ -23,42 +23,32 @@ modify any existing files, except for [client/agent.py](/client/agent.py).
 ### 1. (Optional) Start a local server for testing
 
 You can start a local server by running `python -m server` if you want to test the client locally. This will start a server on `0.0.0.0:5555`.
-Then, open another terminal, go to the project folder, and run `python -m client` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
+Then, open another terminal, go to the project folder, and run `python -m client config.json` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
 
-### 2. Enter your player name and sciper in the config.json file
+### 2. Enter your train_name and sciper in the config.json file
 
-The file `config.json` should contain your player name and sciper.
-For example:
+The file `config.json` should contain your train_name and sciper.
 
-```json
-{
-    "sciper": "000000",
-    "train_name": "Player"
-    ...
-}
-```
-
-You cannot use the same sciper or train name as another player already connected.
+You cannot use the same sciper or train_name as another player already connected.
 
 ### 3. Run the client
 
 If you are connecting to a remote server, you need to know the IP address and port of the server. If you are outside of EPFL network, you will need to use a VPN to connect to the network.
 
-To execute the client and connect to the server. Replace `<ip_adress>` with the IP address of the server (do not enter an IP address if you are connecting to a local server hosted on your machine as the default is already local).
+To run the client and connect to the server, replace `<ip_adress>` in the config file with the IP address of the server.
 
 ```bash
-python -m client <ip_adress>
+python -m client config.json
 ```
 
-You can add the `<port>` parameter to specify the port of the server you want to connect to (default is 5555). 
-
-You should know that events are not being processed when the pygame title bar is dragged as pygame does not handle events in that case. Doing so will unfortunately freeze your game and disconnect you from the server.
+Keep in mind that events are not being processed when the pygame title bar is dragged due to a pygame limitation. Doing so
+will unfortunately freeze your game and disconnect you from the server.
 
 ## How to Play
 
 ### 1. Launch the client
 
-1. Launch your client: `python -m client <ip_adress> <port>`.
+1. Launch your client: `python -m client config.json`.
 2. Wait in the waiting room until all players are connected.
 3. Your agent will automatically control your train.
 
@@ -178,7 +168,7 @@ On the evaluation day, you will have to send us only one agent.py file per team.
 1. For the agent:
    - Display the attributes (with `print` or using the logger) to understand their structure (self.all_trains, self.all_passengers, self.delivery_zones, etc.).
    - Start with changing the direction if the next position will hit a wall.
-   - Implement a simple strategy (e.g., go towards the closest passenger).
+   - Implement an initial strategy (e.g., go towards the closest passenger).
    - Gradually add obstacle avoidance (other trains and wagons).
    - Consider handling cases where the direct path is blocked.
 

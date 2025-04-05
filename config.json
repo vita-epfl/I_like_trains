@@ -1,14 +1,21 @@
 {
-    "sciper": "000000",
-    "train_name": "Player",
-
-    "default_port": 5555,
-    
-    "screen_width": 500,
-    "screen_height": 360,
-    "cell_size": 20,
-    "leaderboard_width": 280,
-
-    "manual_spawn": false,
-    "control_mode": "manual"
+    "client": {
+        "sciper": "000000",
+        "train_name": "Player",
+        "host": "127.0.0.1",
+        "port": 5555,
+        "screen_width": 500,
+        "screen_height": 360,
+        "cell_size": 20,
+        "leaderboard_width": 280,
+        "manual_spawn": false,
+        "control_mode": "manual"
+    },
+    "server": {
+        "host": "0.0.0.0",
+        "port": 5555,
+        "players_per_room": 2,
+        "tick_rate": 60,
+        "game_duration_seconds": 300
+    }
 }

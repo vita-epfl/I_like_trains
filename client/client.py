@@ -8,7 +8,8 @@ from client.renderer import Renderer
 from client.event_handler import EventHandler
 from client.game_state import GameState
 from client.agent import Agent
-import json
+
+from common.config import Config
 
 
 # Configure logging
@@ -19,24 +20,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("client")
 
-# Constants, imported from config.json
-with open("config.json", "r") as f:
-    try:
-        config = json.load(f)
-    except json.decoder.JSONDecodeError as e:
-        print("Failed to parse config.json, check your changes.", file=sys.stderr)
-        raise e
-
-DEFAULT_HOST = "localhost"
-
 
 class Client:
     """Main client class"""
 
-    def __init__(self, host=DEFAULT_HOST, port=config["default_port"]):
+    def __init__(self, config: Config):
         """Initialize the client"""
-        self.host = host
-        self.port = port
+
+        self.config = config.client
+
+        # TODO(alok): delete self.host and self.port, we can use self.config when needed
+        self.host = self.config.host
+        self.port = self.config.port
 
         # Initialize state variables
         self.running = True
@@ -63,21 +58,22 @@ class Client:
         self.passengers = []
         self.delivery_zone = {}
 
-        self.cell_size = config["cell_size"]
+        # TODO(alok): delete self.cell_size, use self.config.cell_size everywhere
+        self.cell_size = self.config.cell_size
         self.game_width = 200  # Initial game area width
         self.game_height = 200  # Initial game area height
-        self.game_screen_padding = config[
-            "cell_size"
-        ]  # Space between game area and leaderboard
-        self.leaderboard_width = config["leaderboard_width"]
+        # Space between game area and leaderboard
+        self.game_screen_padding = self.config.cell_size
+        self.leaderboard_width = self.config.leaderboard_width
         self.leaderboard_height = 2 * self.game_screen_padding + self.game_height
 
         self.leaderboard_data = []
         self.waiting_room_data = None
 
         # Calculate screen dimensions based on game area and leaderboard
-        self.screen_width = config["screen_width"]
-        self.screen_height = config["screen_height"]
+        # TODO(alok): delete these and use self.config.screen_width and self.config.screen_height instead
+        self.screen_width = self.config.screen_width
+        self.screen_height = self.config.screen_height
 
         # Window creation flags and parameters
         self.window_needs_update = False
@@ -95,10 +91,12 @@ class Client:
         self.is_initialized = True
 
         # Initialize components
-        self.network = NetworkManager(self, host, port)
+        self.network = NetworkManager(self, self.host, self.port)
         self.renderer = Renderer(self)
-        self.event_handler = EventHandler(self, config["control_mode"])
-        self.game_state = GameState(self, config["control_mode"])
+
+        # TODO(alok): drop the value for control_mode
+        self.event_handler = EventHandler(self, self.config.control_mode.value)
+        self.game_state = GameState(self, self.config.control_mode.value)
 
         # Reference to the agent (will be initialized later)
         self.agent = None
@@ -178,8 +176,8 @@ class Client:
                 self.screen.blit(
                     text,
                     (
-                        config["screen_width"] // 2 - text.get_width() // 2,
-                        config["screen_height"] // 2 - text.get_height() // 2,
+                        self.config.screen_width // 2 - text.get_width() // 2,
+                        self.config.screen_height // 2 - text.get_height() // 2,
                     ),
                 )
                 pygame.display.flip()
@@ -188,7 +186,7 @@ class Client:
             return
 
         # Create a temporary window for player name
-        temp_width, temp_height = config["screen_width"], config["screen_height"]
+        temp_width, temp_height = self.config.screen_width, self.config.screen_height
         try:
             self.screen = pygame.display.set_mode((temp_width, temp_height))
             pygame.display.set_caption("I Like Trains - Login")
@@ -197,11 +195,13 @@ class Client:
             return
 
         # Get player name and sciper from config
-        player_sciper = config["sciper"]
-        player_name = config["train_name"]
+        # TODO(alok): we should delete these.
+        player_sciper = self.config.sciper
+        player_name = self.config.train_name
 
         # Update agent name
         self.agent.agent_name = player_name
+        # TODO(alok): we should also be consistent on how we name things. Is it player name, agent name, or train name?
         self.agent_name = player_name
         self.agent_sciper = player_sciper  # Store sciper for future use
 
@@ -222,7 +222,7 @@ class Client:
 
             # Add automatic respawn logic
             if (
-                not config["manual_spawn"]
+                not self.config.manual_spawn
                 and self.agent.is_dead
                 and self.agent.waiting_for_respawn
                 and not self.game_over
@@ -307,7 +307,10 @@ class Client:
                     "Server disconnected. Press any key to exit.", True, (255, 0, 0)
                 )
                 text_rect = text.get_rect(
-                    center=(config["screen_width"] // 2, config["screen_height"] // 2)
+                    center=(
+                        self.config.screen_width // 2,
+                        self.config.screen_height // 2,
+                    )
                 )
                 self.renderer.screen.fill((0, 0, 0))
                 self.renderer.screen.blit(text, text_rect)
@@ -354,27 +357,18 @@ logger = logging.getLogger("main")
 
 
 def main():
-    """Main function"""
-    # Check if an IP address was provided as an argument
-    host = DEFAULT_HOST
+    # Load the config file
+    config_file = "config.json"
     if len(sys.argv) > 1:
-        host = sys.argv[1]
+        config_file = sys.argv[1]
+    config = Config.load(config_file)
 
-    # Check if a port was provided as an argument
-    port = config["default_port"]
-    if len(sys.argv) > 2:
-        port = int(sys.argv[2])
+    # TODO(alok): move this logger.into inside network, the connection isn't established here
+    # so this log doesn't belong here
+    logger.info(f"Connecting to server: {config.client.host}:{config.client.port}")
 
-    logger.info(f"Connecting to server: {host}")
-
-    # Create the client
-    client = Client(host, port)
-
-    # Create the agent with a temporary name (will be replaced by user input)
+    # Create the client, agent, and start the client
+    client = Client(config)
     agent = Agent("", client.network)
-
-    # Set the agent for the client
     client.set_agent(agent)
-
-    # Start the client
     client.run()

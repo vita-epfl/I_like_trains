@@ -7,14 +7,15 @@ import threading
 import time
 import logging
 from client.agent import Agent
+from server.passenger import Passenger
 
 logger = logging.getLogger("server.ai_client")
 
 
 class AINetworkInterface:
     """
-    A simple interface that mimics the NetworkManager class from the client
-    but directly interacts with the game on the server side
+    Mimics the NetworkManager class from the client but directly interacts with
+    the game on the server side.
     """
 
     def __init__(self, room, train_name):
@@ -42,8 +43,6 @@ class AINetworkInterface:
             last_wagon_position = self.room.game.trains[self.train_name].drop_wagon()
             if last_wagon_position:
                 # Create a new passenger at the position of the dropped wagon
-                from passenger import Passenger
-
                 new_passenger = Passenger(self.room.game)
                 new_passenger.position = last_wagon_position
                 new_passenger.value = 1

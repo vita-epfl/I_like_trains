@@ -5,7 +5,6 @@ Graphics rendering module for the I Like Trains client
 import pygame
 import logging
 import time
-import json
 
 # Configure logger
 logger = logging.getLogger("client.renderer")
@@ -18,11 +17,8 @@ class Renderer:
         """Initialize renderer with a reference to the client"""
         self.client = client
         self.sorted_trains = []
-
-        # Load config
-        with open("config.json", "r") as f:
-            config = json.load(f)
-        self.manual_spawn = config["manual_spawn"]
+        # TODO(alok): delete self.manual_spawn, use self.client.config.manual_spawn instead
+        self.manual_spawn = self.client.config.manual_spawn
 
     def draw_game(self):
         """Draws the game."""

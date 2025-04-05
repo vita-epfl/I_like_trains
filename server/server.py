@@ -2,16 +2,15 @@ import socket
 import json
 import threading
 import time
-import sys
 import logging
 import uuid
 import random
-import os
 import signal
 
+from common.config import Config
 from server.passenger import Passenger
 from server.ai_client import AIClient
-from server.room import Room, load_best_scores, WAITING_TIME_BEFORE_BOTS
+from server.room import Room, load_best_scores
 
 
 # Colors
@@ -25,13 +24,6 @@ UP = (0, -1)
 DOWN = (0, 1)
 LEFT = (-1, 0)
 RIGHT = (1, 0)
-
-# Default host
-HOST: str = os.getenv("HOST", "0.0.0.0")
-PORT: int = int(os.getenv("PORT", 5555))
-DEFAULT_NB_PLAYERS_PER_ROOM: int = int(os.getenv("NB_PLAYERS_PER_ROOM", "2"))
-ALLOW_MULTIPLE_CONNECTIONS: bool = bool(os.getenv("ALLOW_MULTIPLE_CONNECTIONS", "True"))
-
 
 # List of names for AI-controlled clients
 AI_NAMES = [
@@ -56,38 +48,6 @@ AI_NAMES = [
     "Bot James",
     "Bot Lester",
 ]
-
-# Client timeout in seconds (how long to wait before considering a client disconnected)
-CLIENT_TIMEOUT = 2.0
-
-
-# Check if an IP address has been supplied in argument
-if len(sys.argv) > 1:
-    HOST = sys.argv[1]
-
-# Check if port is provided as second argument
-if len(sys.argv) > 2:
-    try:
-        PORT = int(sys.argv[2])
-    except ValueError:
-        print(f"Invalid port value: {sys.argv[2]}. Using default: {PORT}")
-
-# Check if max players per room is provided as third argument
-if len(sys.argv) > 3:
-    try:
-        DEFAULT_NB_PLAYERS_PER_ROOM = int(sys.argv[3])
-    except ValueError:
-        print(
-            f"Invalid number of players value: {sys.argv[3]}. Using default: {DEFAULT_NB_PLAYERS_PER_ROOM}"
-        )
-
-if len(sys.argv) > 4:
-    try:
-        ALLOW_MULTIPLE_CONNECTIONS = bool(int(sys.argv[4]))
-    except ValueError:
-        print(
-            f"Invalid multiple connections value: {sys.argv[4]}. Using default: {ALLOW_MULTIPLE_CONNECTIONS}"
-        )
 
 
 def setup_server_logger():
@@ -131,7 +91,6 @@ def setup_server_logger():
 
 # Configure the server logger
 logger = setup_server_logger()
-logger.info(f"The server starts on {HOST} on port {PORT}")
 
 
 def display_high_scores(scores, limit=10):
@@ -150,7 +109,8 @@ def display_high_scores(scores, limit=10):
 
 
 class Server:
-    def __init__(self, players_per_room=0):
+    def __init__(self, config: Config):
+        self.config = config.server
         self.rooms = {}  # {room_id: Room}
         self.lock = threading.Lock()
 
@@ -164,18 +124,17 @@ class Server:
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind((HOST, PORT))
-            logger.info(f"UDP socket created and bound to {HOST}:{PORT}")
+            self.server_socket.bind((self.config.host, self.config.port))
+            logger.info(
+                f"UDP socket created and bound to {self.config.host}:{self.config.port}"
+            )
         except Exception as e:
             logger.error(f"Error creating UDP socket: {e}")
             raise
 
         self.running = True
-        # TODO(alok): move DEFAULT_NB_PLAYERS_PER_ROOM to config.json
-        if players_per_room > 0:
-            self.nb_players = players_per_room
-        else:
-            self.nb_players = DEFAULT_NB_PLAYERS_PER_ROOM
+        # TODO(alok): delete self.nb_players and use self.config.players_per_room instead
+        self.nb_players = self.config.players_per_room
         self.addr_to_name = {}  # Maps client addresses to agent names
         self.addr_to_sciper = {}  # Maps client addresses to scipers
         self.sciper_to_addr = {}  # Maps scipers to client addresses
@@ -189,7 +148,8 @@ class Server:
         self.threads = []  # Initialize threads attribute
 
         # Client activity tracking for disconnection detection
-        self.client_timeout = CLIENT_TIMEOUT
+        # TODO(alok): delete and use self.config.client_timeout_seconds instead
+        self.client_timeout = self.config.client_timeout_seconds
 
         # Ping tracking for active connection checking
         self.ping_interval = self.client_timeout / 2
@@ -206,12 +166,12 @@ class Server:
         # Start accepting clients
         accept_thread = threading.Thread(target=self.accept_clients, daemon=True)
         accept_thread.start()
-        logger.info(f"Server started on {HOST}:{PORT}")
+        logger.info(f"Server started on {self.config.host}:{self.config.port}")
 
     def create_room(self, nb_players, running):
         """Create a new room with specified number of players"""
         room_id = str(uuid.uuid4())[:8]
-        new_room = Room(room_id, nb_players, running, server=self)
+        new_room = Room(self.config, room_id, nb_players, running, server=self)
         logger.info(f"Created new room {room_id} with {nb_players} players")
         self.rooms[room_id] = new_room
         return new_room
@@ -626,7 +586,7 @@ class Server:
                 "waiting_time": int(
                     max(
                         0,
-                        WAITING_TIME_BEFORE_BOTS
+                        self.config.wait_time_before_bots_seconds
                         - (time.time() - selected_room.room_creation_time),
                     )
                 )

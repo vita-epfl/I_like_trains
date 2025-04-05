@@ -1,3 +1,4 @@
+from common.server_config import ServerConfig
 from server.game import Game
 import threading
 import time
@@ -7,12 +8,6 @@ import os
 
 # Configure logger
 logger = logging.getLogger("server.room")
-
-# Game duration in seconds
-GAME_LIFE_TIME = 60 * 5
-
-# Waiting time before adding bots (in seconds)
-WAITING_TIME_BEFORE_BOTS = 30  # 30 seconds
 
 # Scores file path
 SCORES_FILE_PATH = "player_scores.json"
@@ -59,10 +54,12 @@ def load_best_scores():
 
 
 class Room:
-    def __init__(self, room_id, nb_players, running, server):
+    # TODO(alok): remove nb_players and use config.players_per_room
+    def __init__(self, config: ServerConfig, room_id, nb_players, running, server):
+        self.config = config
         self.id = room_id
         self.nb_players = nb_players
-        self.game = Game(server.send_cooldown_notification, self.nb_players)
+        self.game = Game(config, server.send_cooldown_notification, self.nb_players)
         self.game.room_id = room_id  # Store the room ID in the Game object
         self.game.server = server  # Give a reference to the server
         self.clients = {}  # {addr: agent_name}
@@ -125,13 +122,14 @@ class Room:
             )
 
     def game_timer(self):
-        """Thread that monitors game time and ends the game after GAME_LIFE_TIME seconds"""
+        """
+        Thread that monitors game time and ends the game after game_duration_seconds.
+        """
         while self.running and not self.game_over:
             if self.game_start_time is not None:
                 elapsed_time = time.time() - self.game_start_time
 
-                # If the game has been running for GAME_LIFE_TIME seconds, end it
-                if elapsed_time >= GAME_LIFE_TIME:
+                if elapsed_time >= self.config.game_duration_seconds:
                     self.end_game()
                     break
 
@@ -142,7 +140,9 @@ class Room:
         if self.game_over:
             return  # Game already ended
 
-        logger.info(f"Game in room {self.id} has ended after {GAME_LIFE_TIME} seconds")
+        logger.info(
+            f"Game in room {self.id} has ended after {self.config.game_duration_seconds} seconds"
+        )
         self.game_over = True
 
         # Collect final scores
@@ -188,7 +188,7 @@ class Room:
             "data": {
                 "message": "Game is over. Time limit reached.",
                 "final_scores": final_scores,
-                "duration": GAME_LIFE_TIME,
+                "duration": self.config.game_duration_seconds,
                 "best_scores": scores_dict,
             },
         }
@@ -255,7 +255,9 @@ class Room:
                                 )
                                 elapsed_time = current_time - start_time
                                 remaining_time = max(
-                                    0, WAITING_TIME_BEFORE_BOTS - elapsed_time
+                                    0,
+                                    self.config.wait_time_before_bots_seconds
+                                    - elapsed_time,
                                 )
 
                                 # If time is up and room is not full, add bots and start the game
@@ -316,7 +318,7 @@ class Room:
         initial_state = {
             "type": "initial_state",
             "data": {
-                "game_life_time": GAME_LIFE_TIME,  # Send total game time to clients
+                "game_life_time": self.config.game_duration_seconds,
                 "start_time": time.time(),  # Send server start time for synchronization
             },
         }
