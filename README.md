@@ -104,7 +104,7 @@ The client is responsible for managing the game display and user interactions. I
 4. The server regularly sends the game state to the clients, and also listens to potential actions (change direction or drop wagon) from the clients to influence the game.
 5. The client receives the game state in the `network.py` and updates the agent's game state from the `handle_state_data()` method in `game_state.py`.
 6. This method then calls `update_agent()` (inherited by the `Agent` class from the `BaseAgent` class) to ask for a new direction the agent has to determine.
-7. The `update_agent()` method then calls the method `get_direction()` to dynamically calculate the next direction the train should take according to the game state (where are the other trains, the walls, the passengers, the delivery zones, etc.) and send it to the server (`self.network.send_direction_change(direction)`).
+7. The `update_agent()` method then calls the method `get_move()` to dynamically calculate the next direction the train should take according to the game state (where are the other trains, the walls, the passengers, the delivery zones, etc.) and send it to the server.
 8. The server updates the game state and the cycle continues.
 
 ### Agent class
@@ -144,9 +144,9 @@ or by direcly checking what is returned by the `to_dict()` method in each class.
 You must implement an agent that controls your train. The main method to implement in `client/agent.py` is:
 
 ```python
-def get_direction(self, game_width, game_height):
+def get_move(self):
     """
-    This method is regularly called by the client to get the next direction of the train.
+    This method is regularly called by the client to get the next move for the train.
     """
 ```
 

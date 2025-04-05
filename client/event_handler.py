@@ -5,6 +5,8 @@ Module for handling events for the I Like Trains client
 import pygame
 import logging
 
+from common.move import Move
+
 
 # Configure the logger
 logger = logging.getLogger("client.event_handler")
@@ -50,13 +52,13 @@ class EventHandler:
                 if self.control_mode == "manual":
                     # Change the train's direction based on the pressed keys
                     if event.key == pygame.K_UP:
-                        self.client.network.send_direction_change((0, -1))
+                        self.client.network.send_direction_change(Move.UP.value)
                     elif event.key == pygame.K_DOWN:
-                        self.client.network.send_direction_change((0, 1))
+                        self.client.network.send_direction_change(Move.DOWN.value)
                     elif event.key == pygame.K_LEFT:
-                        self.client.network.send_direction_change((-1, 0))
+                        self.client.network.send_direction_change(Move.LEFT.value)
                     elif event.key == pygame.K_RIGHT:
-                        self.client.network.send_direction_change((1, 0))
+                        self.client.network.send_direction_change(Move.RIGHT.value)
                     # key D drops a wagon
                     elif event.key == pygame.K_d:
                         self.client.network.send_drop_wagon_request()

@@ -4,6 +4,8 @@ Train class for the game "I Like Trains"
 
 import logging
 
+from common.move import Move
+
 # Configure logging
 logging.basicConfig(
     level=logging.DEBUG,
@@ -12,12 +14,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger("server.train")
-
-# Directions
-UP = (0, -1)
-DOWN = (0, 1)
-LEFT = (-1, 0)
-RIGHT = (1, 0)
 
 # Train settings
 # INITIAL_SPEED = 60  # Initial speed in pixels per second
@@ -34,9 +30,9 @@ class Train:
     def __init__(self, x, y, agent_name, color, handle_train_death, tick_rate):
         self.position = (x, y)
         self.wagons = []
-        self.new_direction = (1, 0)
-        self.direction = (1, 0)  # Starts right
-        self.previous_direction = (1, 0)
+        self.new_direction = Move.RIGHT
+        self.direction = Move.RIGHT
+        self.previous_direction = Move.RIGHT
         self.agent_name = agent_name
         self.alive = True
         self.score = 0
@@ -349,9 +345,9 @@ class Train:
     def reset(self):
         self.position = (-1, -1)  # Use an off-screen position instead of None
         self.wagons = []
-        self.direction = (1, 0)
-        self.new_direction = (1, 0)
-        self.previous_direction = (1, 0)
+        self.direction = Move.RIGHT
+        self.new_direction = Move.RIGHT
+        self.previous_direction = Move.RIGHT
         self._dirty = {
             "position": True,
             "wagons": True,

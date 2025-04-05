@@ -13,12 +13,6 @@ from server.ai_client import AIClient
 from server.room import Room, load_best_scores
 
 
-# Directions
-UP = (0, -1)
-DOWN = (0, 1)
-LEFT = (-1, 0)
-RIGHT = (1, 0)
-
 # List of names for AI-controlled clients
 AI_NAMES = [
     "Bot Adrian",
