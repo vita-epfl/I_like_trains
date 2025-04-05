@@ -60,6 +60,8 @@ class Room:
         self.id = room_id
         self.nb_players = nb_players
         self.game = Game(config, server.send_cooldown_notification, self.nb_players)
+        # TODO(alok): why not put room_id and server in Game's __init__ method?
+
         self.game.room_id = room_id  # Store the room ID in the Game object
         self.game.server = server  # Give a reference to the server
         self.clients = {}  # {addr: agent_name}

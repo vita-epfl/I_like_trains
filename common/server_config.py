@@ -6,7 +6,7 @@ class ServerConfig(BaseModel):
     # or 0.0.0.0 if you want to accept local and remote connections.
     host: str = "0.0.0.0"
 
-    # Port on which to listen
+    # Port on which to listen.
     port: int = 5555
 
     # Numbers of trains in each room.
@@ -26,12 +26,17 @@ class ServerConfig(BaseModel):
     # useful for debugging purpose.
     tick_rate: int = 60
 
-    # Duration of a game
+    # Duration of each game.
     game_duration_seconds: int = 300  # 300 seconds == 5 minutes
 
     # Amount of time clients will waiting for other clients to join before the
     # game is started with bots replacing any missing clients.
     wait_time_before_bots_seconds: int = 30
 
-    # Maximum number of passengers on a given square
+    # Maximum number of passengers on a given square.
     max_passengers: int = 3
+
+    # Controls how quickly passenger delivery happens. Depending on this value,
+    # the size of the delivery zone, and the number of passengers, a train might
+    # have to circle around to complete delivery of all their passengers.
+    delivery_cooldown_seconds: float = 0.1

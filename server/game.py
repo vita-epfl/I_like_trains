@@ -41,9 +41,6 @@ GAME_SIZE_INCREMENT = int(
 SPAWN_SAFE_ZONE = 3
 SAFE_PADDING = 3
 
-# Constant for wagon delivery cooldown time (in seconds)
-DELIVERY_COOLDOWN_TIME = 0.1  # Adjust this value to control delivery speed
-
 
 def generate_random_non_blue_color():
     """Generate a random RGB color avoiding blue nuances"""
@@ -355,7 +352,7 @@ class Game:
                 if (
                     train.agent_name not in self.last_delivery_times
                     or current_time - self.last_delivery_times.get(train.agent_name, 0)
-                    >= DELIVERY_COOLDOWN_TIME
+                    >= self.config.delivery_cooldown_seconds
                 ):
                     # Slowly popping wagons and increasing score
                     wagon = train.pop_wagon()
