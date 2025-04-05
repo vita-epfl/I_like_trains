@@ -6,10 +6,10 @@ import random
 import threading
 import time
 
-from train import Train
-from passenger import Passenger
+from server.train import Train
+from server.passenger import Passenger
 import logging
-from delivery_zone import DeliveryZone
+from server.delivery_zone import DeliveryZone
 
 
 # Use the logger configured in server.py

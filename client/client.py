@@ -3,11 +3,11 @@ import logging
 import time
 import threading
 import sys
-from network import NetworkManager
-from renderer import Renderer
-from event_handler import EventHandler
-from game_state import GameState
-from agent import Agent
+from client.network import NetworkManager
+from client.renderer import Renderer
+from client.event_handler import EventHandler
+from client.game_state import GameState
+from client.agent import Agent
 import json
 
 
@@ -21,7 +21,11 @@ logger = logging.getLogger("client")
 
 # Constants, imported from config.json
 with open("config.json", "r") as f:
-    config = json.load(f)
+    try:
+        config = json.load(f)
+    except json.decoder.JSONDecodeError as e:
+        print("Failed to parse config.json, check your changes.", file=sys.stderr)
+        raise e
 
 DEFAULT_HOST = "localhost"
 
@@ -374,7 +378,3 @@ def main():
 
     # Start the client
     client.run()
-
-
-if __name__ == "__main__":
-    main()

@@ -1,5 +1,5 @@
 import random
-from base_agent import BaseAgent
+from client.base_agent import BaseAgent
 
 # Student scipers, will be automatically used to evaluate your code
 SCIPERS = ["000001", "000002", "000003"]

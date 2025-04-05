@@ -1,4 +1,4 @@
-from game import Game
+from server.game import Game
 import threading
 import time
 import json

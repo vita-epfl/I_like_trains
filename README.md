@@ -22,10 +22,8 @@ modify any existing files, except for [client/agent.py](/client/agent.py).
 
 ### 1. (Optional) Start a local server for testing
 
-You can start a local server by executing `python server/server.py` if you want to test the client locally. This will start a server on `0.0.0.0:5555`.
-Then, open another terminal, go to the project folder, and execute `python client/client.py` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
-
-If you want to quit the server, you need to hit `ctrl-c` twice.
+You can start a local server by running `python -m server` if you want to test the client locally. This will start a server on `0.0.0.0:5555`.
+Then, open another terminal, go to the project folder, and run `python -m client` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
 
 ### 2. Enter your player name and sciper in the config.json file
 
@@ -36,19 +34,20 @@ For example:
 {
     "sciper": "000000",
     "train_name": "Player"
+    ...
 }
 ```
 
 You cannot use the same sciper or train name as another player already connected.
 
-### 3. Execute the client
+### 3. Run the client
 
 If you are connecting to a remote server, you need to know the IP address and port of the server. If you are outside of EPFL network, you will need to use a VPN to connect to the network.
 
 To execute the client and connect to the server. Replace `<ip_adress>` with the IP address of the server (do not enter an IP address if you are connecting to a local server hosted on your machine as the default is already local).
 
 ```bash
-python client/client.py <ip_adress>
+python -m client <ip_adress>
 ```
 
 You can add the `<port>` parameter to specify the port of the server you want to connect to (default is 5555). 
@@ -59,7 +58,7 @@ You should know that events are not being processed when the pygame title bar is
 
 ### 1. Launch the client
 
-1. Launch your client: `python client/client.py <ip_adress> <port>`.
+1. Launch your client: `python -m client <ip_adress> <port>`.
 2. Wait in the waiting room until all players are connected.
 3. Your agent will automatically control your train.
 
