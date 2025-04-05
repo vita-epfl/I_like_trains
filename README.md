@@ -149,9 +149,9 @@ or by direcly checking what is returned by the `to_dict()` method in each class.
 
 ## Implementation Task
 
-### Intelligent Agent (agent.py)
+### Agent (agent.py)
 
-You must implement an intelligent agent that controls your train. The main method to implement in `client/agent.py` is:
+You must implement an agent that controls your train. The main method to implement in `client/agent.py` is:
 
 ```python
 def get_direction(self, game_width, game_height):
@@ -160,7 +160,8 @@ def get_direction(self, game_width, game_height):
     """
 ```
 
-- Your train exists in a 2D grid. You can tell your train to turn left, right, or continue going straight. Your code should live in [client/agent.py](/client/agent.py) and any additional files you might need.
+- Your train exists in a 2D grid. You can tell your train to turn left, right, or continue going straight. Your code should live in [client/agent.py](/client/agent.py) and any additional files you might need. You can also instruct your train to drop
+wagons.
 
 #### Using the network to send actions
 
