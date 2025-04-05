@@ -16,13 +16,6 @@ from server.delivery_zone import DeliveryZone
 # Use the logger configured in server.py
 logger = logging.getLogger("server.game")
 
-# Colors
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
-DARK_GREEN = (0, 100, 0)
-
 ORIGINAL_GAME_WIDTH = 400
 ORIGINAL_GAME_HEIGHT = 400
 

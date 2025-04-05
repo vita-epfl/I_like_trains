@@ -13,12 +13,6 @@ from server.ai_client import AIClient
 from server.room import Room, load_best_scores
 
 
-# Colors
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
-
 # Directions
 UP = (0, -1)
 DOWN = (0, 1)
