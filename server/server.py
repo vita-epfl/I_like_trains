@@ -105,8 +105,6 @@ class Server:
             raise
 
         self.running = True
-        # TODO(alok): delete self.nb_players and use self.config.players_per_room instead
-        self.nb_players = self.config.players_per_room
         self.addr_to_name = {}  # Maps client addresses to agent names
         self.addr_to_sciper = {}  # Maps client addresses to scipers
         self.sciper_to_addr = {}  # Maps scipers to client addresses
@@ -129,34 +127,34 @@ class Server:
         self.ping_thread.start()
 
         # Create the first room
-        self.create_room(self.nb_players, True)
+        self.create_room(True)
 
         # Start accepting clients
         accept_thread = threading.Thread(target=self.accept_clients, daemon=True)
         accept_thread.start()
         logger.info(f"Server started on {self.config.host}:{self.config.port}")
 
-    def create_room(self, nb_players, running):
+    def create_room(self, running):
         """Create a new room with specified number of players"""
         room_id = str(uuid.uuid4())[:8]
-        new_room = Room(self.config, room_id, nb_players, running, server=self)
-        logger.info(f"Created new room {room_id} with {nb_players} players")
+        new_room = Room(self.config, room_id, running, server=self)
+        logger.info(
+            f"Created new room {room_id} with {self.config.players_per_room} players"
+        )
         self.rooms[room_id] = new_room
         return new_room
 
-    def get_available_room(self, nb_players):
+    def get_available_room(self):
         """Get an available room or create a new one if needed"""
         # First try to find a non-full room
         for room in self.rooms.values():
-            if (
-                room.nb_players == nb_players
-                and not room.is_full()
-                and not room.game_thread
-            ):
+            if not room.is_full() and not room.game_thread:
                 return room
-        logger.debug(f"No suitable room found for {nb_players} players")
+        logger.debug(
+            f"No suitable room found for {self.config.players_per_room} players"
+        )
         # If no suitable room found, create a new one
-        return self.create_room(nb_players, True)
+        return self.create_room(True)
 
     def accept_clients(self):
         """Thread that waits for new connections"""
@@ -515,7 +513,9 @@ class Server:
         self.sciper_to_addr[agent_sciper] = addr
 
         # Assign to a room
-        selected_room = self.get_available_room(self.nb_players)
+        # TODO(alok): this code is probably prone to race conditions. I don't see any locks
+        # around new_client handling.
+        selected_room = self.get_available_room()
         selected_room.clients[addr] = agent_name
 
         # Mark the room as having at least one human player
@@ -538,7 +538,7 @@ class Server:
             "data": {
                 "room_id": selected_room.id,
                 "current_players": len(selected_room.clients),
-                "max_players": selected_room.nb_players,
+                "max_players": self.config.players_per_room,
             },
         }
         self.server_socket.sendto((json.dumps(response) + "\n").encode(), addr)
@@ -549,7 +549,7 @@ class Server:
             "data": {
                 "room_id": selected_room.id,
                 "players": list(selected_room.clients.values()),
-                "nb_players": selected_room.nb_players,
+                "nb_players": self.config.players_per_room,
                 "game_started": selected_room.game_thread is not None,
                 "waiting_time": int(
                     max(
@@ -665,9 +665,9 @@ class Server:
 
             elif message.get("action") == "start_game":
                 if not room.game_thread or not room.game_thread.is_alive():
-                    if room.get_player_count() >= self.nb_players:
+                    if room.get_player_count() >= self.config.players_per_room:
                         logger.info(
-                            f"Starting game as number of players: {room.get_player_count()} and number of players: {self.nb_players}"
+                            f"Starting game as number of players: {room.get_player_count()} and number of players: {self.config.players_per_room}"
                         )
                         room.start_game()
                         logger.info(f"Game started by {agent_name}")

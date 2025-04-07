@@ -48,8 +48,7 @@ def generate_random_non_blue_color():
 
 
 class Game:
-    # TODO(alok): remove nb_players and use config.players_per_room
-    def __init__(self, config: ServerConfig, send_cooldown_notification, nb_players):
+    def __init__(self, config: ServerConfig, send_cooldown_notification):
         self.config = config
         self.send_cooldown_notification = send_cooldown_notification
         self.game_width = ORIGINAL_GAME_WIDTH
@@ -59,7 +58,10 @@ class Game:
         self.cell_size = CELL_SIZE
         self.running = True
         self.delivery_zone = DeliveryZone(
-            self.game_width, self.game_height, self.cell_size, nb_players
+            self.game_width,
+            self.game_height,
+            self.cell_size,
+            self.config.players_per_room,
         )
         self.trains = {}
         self.ai_clients = {}

@@ -1,6 +1,6 @@
 import sys
 from client.agent import Agent
-from client.client import Client, main as client_main
+from client.client import Client
 from common.config import Config
 from server.server import Server
 

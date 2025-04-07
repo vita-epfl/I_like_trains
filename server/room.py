@@ -13,16 +13,15 @@ TICK_RATE = 30
 
 
 class Room:
-    # TODO(alok): remove nb_players and use config.players_per_room
-    def __init__(self, config: ServerConfig, room_id, nb_players, running, server):
+    def __init__(self, config: ServerConfig, room_id, running, server):
         self.config = config
         self.id = room_id
-        self.nb_players = nb_players
-        self.game = Game(config, server.send_cooldown_notification, self.nb_players)
-        # TODO(alok): why not put room_id and server in Game's __init__ method?
+        self.game = Game(config, server.send_cooldown_notification)
 
+        # TODO(alok): why not put room_id and server in Game's __init__ method?
         self.game.room_id = room_id  # Store the room ID in the Game object
         self.game.server = server  # Give a reference to the server
+
         self.clients = {}  # {addr: agent_name}
         self.game_thread = None
         self.running = running  # The room is active by default
@@ -36,7 +35,9 @@ class Room:
         self.has_human_players = (
             False  # Track if the room has at least one human player
         )
-        logger.info(f"Room {room_id} created with number of players {nb_players}")
+        logger.info(
+            f"Room {room_id} created with number of players {self.config.players_per_room}"
+        )
 
     def start_game(self):
         self.state_thread = threading.Thread(target=self.broadcast_game_state)
@@ -188,7 +189,7 @@ class Room:
         close_thread.start()
 
     def is_full(self):
-        return len(self.clients) >= self.nb_players
+        return len(self.clients) >= self.config.players_per_room
 
     def get_player_count(self):
         return len(self.clients)
@@ -236,7 +237,7 @@ class Room:
                                 "data": {
                                     "room_id": self.id,
                                     "players": list(self.clients.values()),
-                                    "nb_players": self.nb_players,
+                                    "nb_players": self.config.players_per_room,
                                     "game_started": self.game_thread is not None,
                                     "waiting_time": int(remaining_time),
                                 },
@@ -344,7 +345,7 @@ class Room:
         """Fill the room with bots and start the game"""
         server = self.game.server
         current_players = len(self.clients)
-        bots_needed = self.nb_players - current_players
+        bots_needed = self.config.players_per_room - current_players
 
         if bots_needed <= 0:
             return
