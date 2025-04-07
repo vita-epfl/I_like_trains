@@ -222,7 +222,7 @@ class Renderer:
 
             # Draw main train
             color = train_color
-            if train_name == self.client.agent_name:
+            if train_name == self.client.config.train_name:
                 color = (0, 0, 255)  # Blue for player's train
 
             # Draw train with more elaborate shape
@@ -265,7 +265,7 @@ class Renderer:
                 wagon_x += self.client.game_screen_padding
                 wagon_y += self.client.game_screen_padding
                 wagon_color = train_wagon_color
-                if train_name == self.client.agent_name:
+                if train_name == self.client.config.train_name:
                     wagon_color = (50, 50, 200)  # Darker blue for player's wagons
 
                 pygame.draw.rect(
@@ -573,7 +573,7 @@ class Renderer:
                     rank_color = (100, 100, 100)  # Gray
 
                 # Highlight current player's row
-                if train_name == self.client.agent_name:
+                if train_name == self.client.config.train_name:
                     pygame.draw.rect(
                         self.client.screen,
                         (220, 220, 255),  # Light blue background
@@ -593,7 +593,7 @@ class Renderer:
                     train_data = self.client.trains[train_name]
                     if isinstance(train_data, dict) and "color" in train_data:
                         train_color = train_data["color"]
-                    if train_name == self.client.agent_name:
+                    if train_name == self.client.config.train_name:
                         train_color = (0, 0, 255)  # Blue for player's train
 
                 # Display rank
@@ -780,7 +780,7 @@ class Renderer:
                     rank_color = (255, 255, 255)  # White
 
                 # Highlight current player
-                if player_name == self.client.agent_name:
+                if player_name == self.client.config.train_name:
                     # Draw highlight rectangle
                     pygame.draw.rect(
                         self.client.screen,

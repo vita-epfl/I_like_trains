@@ -22,11 +22,17 @@ logger = logging.getLogger("client")
 
 
 class Client:
-    """Main client class"""
+    """
+    Main client class. This class initializes among other things:
+    - Agent:        runs the student's algorithm to control their train.
+    - EventHandler: enables controlling the train using keyboard keys, useful
+                    for testing purpose.
+    - GameState:    processes messages received from the server.
+    - Network:      communicates with the server.
+    - Renderer:     renders the UI using pygame.
+    """
 
     def __init__(self, config: Config):
-        """Initialize the client"""
-
         self.config = config.client
 
         # Initialize state variables
@@ -49,7 +55,6 @@ class Client:
         self.sciper_check_result = False
 
         # Game data
-        self.agent_name = ""
         self.trains = {}
         self.passengers = []
         self.delivery_zone = {}
@@ -58,6 +63,7 @@ class Client:
         self.cell_size = self.config.cell_size
         self.game_width = 200  # Initial game area width
         self.game_height = 200  # Initial game area height
+
         # Space between game area and leaderboard
         self.game_screen_padding = self.config.cell_size
         self.leaderboard_width = self.config.leaderboard_width
@@ -93,10 +99,10 @@ class Client:
         self.event_handler = EventHandler(self, self.config.control_mode)
         self.game_state = GameState(self, self.config.control_mode)
 
-        # Reference to the agent (will be initialized later)
-        self.agent = None
         self.ping_response_received = False  # Added for connection verification
         self.server_disconnected = False
+
+        self.agent = Agent(self.config.train_name, self.network)
 
     def update_game_window_size(self, width, height):
         """Schedule window size update to be done in main thread"""
@@ -116,19 +122,12 @@ class Client:
                         (width, height), pygame.RESIZABLE
                     )
                     pygame.display.set_caption(
-                        f"I Like Trains - {self.agent_name}"
-                        if self.agent_name
-                        else "I Like Trains"
+                        f"I Like Trains - {self.config.train_name}"
                     )
                 except Exception as e:
                     logger.error(f"Error updating window: {e}")
 
                 self.window_needs_update = False
-
-    def set_agent(self, agent):
-        """Set the agent for the client"""
-        self.agent = agent
-        self.agent_name = agent.agent_name
 
     def run(self):
         """Main client loop"""
@@ -196,12 +195,11 @@ class Client:
 
         # Update agent name
         self.agent.agent_name = player_name
-        # TODO(alok): we should also be consistent on how we name things. Is it player name, agent name, or train name?
-        self.agent_name = player_name
+        # TODO(alok): we use the terms player/agent/train in an interchangeable way it seems?
         self.agent_sciper = player_sciper  # Store sciper for future use
 
         # Send agent name to server
-        if not self.network.send_agent_ids(self.agent_name, self.agent_sciper):
+        if not self.network.send_agent_ids(self.config.train_name, self.agent_sciper):
             logger.error("Failed to send agent name to server")
             return
 
@@ -360,6 +358,4 @@ def main():
 
     # Create the client, agent, and start the client
     client = Client(config)
-    agent = Agent("", client.network)
-    client.set_agent(agent)
     client.run()

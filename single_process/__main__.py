@@ -1,5 +1,4 @@
 import sys
-from client.agent import Agent
 from client.client import Client
 from common.config import Config
 from server.server import Server
@@ -30,8 +29,6 @@ def main():
     Server(config)
 
     client = Client(config)
-    agent = Agent("", client.network)
-    client.set_agent(agent)
     client.run()
 
 
