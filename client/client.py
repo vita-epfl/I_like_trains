@@ -29,10 +29,6 @@ class Client:
 
         self.config = config.client
 
-        # TODO(alok): delete self.host and self.port, we can use self.config when needed
-        self.host = self.config.host
-        self.port = self.config.port
-
         # Initialize state variables
         self.running = True
         self.is_initialized = False
@@ -91,7 +87,7 @@ class Client:
         self.is_initialized = True
 
         # Initialize components
-        self.network = NetworkManager(self, self.host, self.port)
+        self.network = NetworkManager(self)
         self.renderer = Renderer(self)
 
         self.event_handler = EventHandler(self, self.config.control_mode)
@@ -361,10 +357,6 @@ def main():
     if len(sys.argv) > 1:
         config_file = sys.argv[1]
     config = Config.load(config_file)
-
-    # TODO(alok): move this logger.into inside network, the connection isn't established here
-    # so this log doesn't belong here
-    logger.info(f"Connecting to server: {config.client.host}:{config.client.port}")
 
     # Create the client, agent, and start the client
     client = Client(config)

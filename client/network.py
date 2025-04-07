@@ -22,11 +22,9 @@ logger = logging.getLogger("client.network")
 class NetworkManager:
     """Class responsible for client network communications"""
 
-    def __init__(self, client, host, port=5555):
+    def __init__(self, client):
         """Initialize network manager with client reference"""
         self.client = client
-        self.host = host
-        self.port = port
         self.socket = None
         self.running = True
         self.receive_thread = None
@@ -35,6 +33,10 @@ class NetworkManager:
     def connect(self):
         """Establish connection with server"""
         try:
+            logger.info(
+                f"Connecting to server: {self.client.config.host}:{self.client.config.port}"
+            )
+
             # Create UDP socket
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             # Set socket timeout to detect server disconnection
@@ -42,8 +44,10 @@ class NetworkManager:
             # Bind to any available port on client side (required for receiving in UDP)
             self.socket.bind(("0.0.0.0", 0))
             # Store server address for sending
-            self.server_addr = (self.host, self.port)
-            logger.info(f"UDP socket created for server at {self.host}:{self.port}")
+            self.server_addr = (self.client.config.host, self.client.config.port)
+            logger.info(
+                f"UDP socket created for server at {self.client.config.host}:{self.client.config.port}"
+            )
 
             self.last_ping_time = time.time()
 
@@ -340,7 +344,7 @@ class NetworkManager:
 
             if not self.client.name_check_received:
                 logger.error(
-                    f"Timeout waiting for name check response from server at {self.host}:{self.port}"
+                    f"Timeout waiting for name check response from server at {self.client.config.host}:{self.client.config.port}"
                 )
                 return False
 
