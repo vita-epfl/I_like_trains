@@ -203,19 +203,9 @@ class Client:
             logger.error(f"Error creating login window: {e}")
             return
 
-        # Get player name and sciper from config
-        # TODO(alok): we should delete these.
-        player_sciper = self.config.sciper
-        player_name = self.config.train_name
-
-        # Update agent name
-        self.agent.agent_name = player_name
-        # TODO(alok): we use the terms player/agent/train in an interchangeable way it seems?
-        self.agent_sciper = player_sciper  # Store sciper for future use
-
         # Send agent name to server
-        if not self.network.send_agent_ids(self.config.train_name, self.agent_sciper):
-            logger.error("Failed to send agent name to server")
+        if not self.network.send_agent_ids(self.config.train_name, self.config.sciper):
+            logger.error("Failed to send agent name and sciper to server")
             return
 
         # Main loop
