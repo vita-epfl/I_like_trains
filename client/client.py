@@ -105,13 +105,28 @@ class Client:
         self.agent = Agent(self.config.train_name, self.network)
 
     def update_game_window_size(self, width, height):
-        """Schedule window size update to be done in main thread"""
+        """
+        Schedule window size update to be done in main thread.
+
+        The initial game design implemented a playing field which can be
+        resized as trains join the game. This should however not happen
+        as the number of trains per room is now a constant.
+
+        TODO(alok): consider removing this method?
+        """
+
+        # TODO(alok): the code here could have used a Queue (https://docs.python.org/3.12/library/queue.html#queue.Queue)
+        # avoiding the need for explicit locks (which are typically errorprone to use).
         with self.lock:
             self.window_needs_update = True
             self.window_update_params = {"width": width, "height": height}
 
-    def handle_window_updates(self):
-        """Process any pending window updates in the main thread"""
+    def process_window_updates(self):
+        """
+        Process any pending window updates in the main thread.
+
+        See Client.update_game_window_size for additional context.
+        """
         with self.lock:
             if self.window_needs_update:
                 width = self.window_update_params["width"]
@@ -210,8 +225,8 @@ class Client:
             # Handle events
             self.event_handler.handle_events()
 
-            # Handle any pending window updates in the main thread
-            self.handle_window_updates()
+            # Process any pending window updates in the main thread
+            self.process_window_updates()
 
             # Add automatic respawn logic
             if (
