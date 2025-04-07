@@ -119,12 +119,8 @@ class Server:
         self.unknown_clients_sent_disconnect = {}  # Unknown client address -> timestamp of last disconnect message
         self.threads = []  # Initialize threads attribute
 
-        # Client activity tracking for disconnection detection
-        # TODO(alok): delete and use self.config.client_timeout_seconds instead
-        self.client_timeout = self.config.client_timeout_seconds
-
         # Ping tracking for active connection checking
-        self.ping_interval = self.client_timeout / 2
+        self.ping_interval = self.config.client_timeout_seconds / 2
         self.ping_responses = {}  # Track which clients have responded to pings
 
         # Start the ping thread (handles all client timeouts)
@@ -874,7 +870,10 @@ class Server:
                         continue
 
                     # Check if client has timed out
-                    if current_time - last_activity > self.client_timeout:
+                    if (
+                        current_time - last_activity
+                        > self.config.client_timeout_seconds
+                    ):
                         # Client has timed out, handle disconnection
                         self.handle_client_disconnection(addr, "timeout")
 
