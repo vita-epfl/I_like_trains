@@ -16,8 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger("server.train")
 
 # Train settings
-# INITIAL_SPEED = 60  # Initial speed in pixels per second
-INITIAL_SPEED = 10  # Initial speed in pixels per second: 5
+INITIAL_SPEED = 10  # Initial speed in pixels per second
 SPEED_DECREMENT_COEFFICIENT = 0.95  # Speed reduction coefficient for each wagon
 
 ACTIVATE_SPEED_BOOST = True  # Activate speed boost
