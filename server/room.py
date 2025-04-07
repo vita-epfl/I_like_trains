@@ -1,4 +1,4 @@
-from common.server_config import ServerConfig
+import os
 from server.game import Game
 import threading
 import time
@@ -13,14 +13,10 @@ TICK_RATE = 30
 
 
 class Room:
-    def __init__(self, config: ServerConfig, room_id, running, server):
-        self.config = config
-        self.id = room_id
-        self.game = Game(config, server.send_cooldown_notification)
-
-        # TODO(alok): why not put room_id and server in Game's __init__ method?
-        self.game.room_id = room_id  # Store the room ID in the Game object
-        self.game.server = server  # Give a reference to the server
+    def __init__(self, server, running):
+        self.server = server
+        self.id = os.urandom(4).hex()
+        self.game = Game(self.server.config, server.send_cooldown_notification)
 
         self.clients = {}  # {addr: agent_name}
         self.game_thread = None
@@ -36,7 +32,7 @@ class Room:
             False  # Track if the room has at least one human player
         )
         logger.info(
-            f"Room {room_id} created with number of players {self.config.players_per_room}"
+            f"Room {self.id} created with number of players {self.server.config.players_per_room}"
         )
 
     def start_game(self):
@@ -73,7 +69,7 @@ class Room:
                         and client_addr[0] == "AI"
                     ):
                         continue
-                    self.game.server.server_socket.sendto(
+                    self.server.server_socket.sendto(
                         (json.dumps(response) + "\n").encode(), client_addr
                     )
                 except Exception as e:
@@ -91,7 +87,7 @@ class Room:
             if self.game_start_time is not None:
                 elapsed_time = time.time() - self.game_start_time
 
-                if elapsed_time >= self.config.game_duration_seconds:
+                if elapsed_time >= self.server.config.game_duration_seconds:
                     self.end_game()
                     break
 
@@ -103,7 +99,7 @@ class Room:
             return  # Game already ended
 
         logger.info(
-            f"Game in room {self.id} has ended after {self.config.game_duration_seconds} seconds"
+            f"Game in room {self.id} has ended after {self.server.config.game_duration_seconds} seconds"
         )
         self.game_over = True
 
@@ -123,14 +119,14 @@ class Room:
 
             # Get the sciper associated with this client address
             player_sciper = None
-            if client_addr and client_addr in self.game.server.addr_to_sciper:
-                player_sciper = self.game.server.addr_to_sciper[client_addr]
+            if client_addr and client_addr in self.server.addr_to_sciper:
+                player_sciper = self.server.addr_to_sciper[client_addr]
 
             final_scores.append({"name": train_name, "best_score": best_score})
 
             # Update best score in the scores file if we have a valid sciper
             if player_sciper:
-                if self.game.server.high_score.update(player_sciper, best_score):
+                if self.server.high_score.update(player_sciper, best_score):
                     scores_updated = True
                     logger.info(
                         f"Updated best score for {train_name} (sciper: {player_sciper}): {best_score}"
@@ -138,7 +134,7 @@ class Room:
 
         # Save scores if any were updated
         if scores_updated:
-            self.game.server.high_score.save()
+            self.server.high_score.save()
 
         # Sort scores in descending order
         final_scores.sort(key=lambda x: x["best_score"], reverse=True)
@@ -149,8 +145,8 @@ class Room:
             "data": {
                 "message": "Game is over. Time limit reached.",
                 "final_scores": final_scores,
-                "duration": self.config.game_duration_seconds,
-                "best_scores": self.game.server.high_score.get(),
+                "duration": self.server.config.game_duration_seconds,
+                "best_scores": self.server.high_score.get(),
             },
         }
 
@@ -166,7 +162,7 @@ class Room:
                 ):
                     continue
 
-                self.game.server.server_socket.sendto(state_json.encode(), client_addr)
+                self.server.server_socket.sendto(state_json.encode(), client_addr)
             except Exception as e:
                 logger.error(f"Error sending game over data to client: {e}")
 
@@ -180,8 +176,8 @@ class Room:
             logger.info(f"Closing room {self.id} after game over")
             self.running = False
             # Remove the room from the server
-            if self.game.server:
-                self.game.server.remove_room(self.id)
+            if self.server:
+                self.server.remove_room(self.id)
 
         # Start a thread to close the room after a delay
         close_thread = threading.Thread(target=close_room_after_delay)
@@ -189,7 +185,7 @@ class Room:
         close_thread.start()
 
     def is_full(self):
-        return len(self.clients) >= self.config.players_per_room
+        return len(self.clients) >= self.server.config.players_per_room
 
     def get_player_count(self):
         return len(self.clients)
@@ -217,7 +213,7 @@ class Room:
                                 elapsed_time = current_time - start_time
                                 remaining_time = max(
                                     0,
-                                    self.config.wait_time_before_bots_seconds
+                                    self.server.config.wait_time_before_bots_seconds
                                     - elapsed_time,
                                 )
 
@@ -237,7 +233,7 @@ class Room:
                                 "data": {
                                     "room_id": self.id,
                                     "players": list(self.clients.values()),
-                                    "nb_players": self.config.players_per_room,
+                                    "nb_players": self.server.config.players_per_room,
                                     "game_started": self.game_thread is not None,
                                     "waiting_time": int(remaining_time),
                                 },
@@ -254,7 +250,7 @@ class Room:
                                     ):
                                         continue
 
-                                    self.game.server.server_socket.sendto(
+                                    self.server.server_socket.sendto(
                                         state_json.encode(), client_addr
                                     )
                                 except Exception as e:
@@ -279,7 +275,7 @@ class Room:
         initial_state = {
             "type": "initial_state",
             "data": {
-                "game_life_time": self.config.game_duration_seconds,
+                "game_life_time": self.server.config.game_duration_seconds,
                 "start_time": time.time(),  # Send server start time for synchronization
             },
         }
@@ -294,7 +290,7 @@ class Room:
                     and client_addr[0] == "AI"
                 ):
                     continue
-                self.game.server.server_socket.sendto(
+                self.server.server_socket.sendto(
                     initial_state_json.encode(), client_addr
                 )
             except Exception as e:
@@ -327,7 +323,7 @@ class Room:
                                 ):
                                     continue
 
-                                self.game.server.server_socket.sendto(
+                                self.server.server_socket.sendto(
                                     state_json.encode(), client_addr
                                 )
                             except Exception as e:
@@ -343,9 +339,8 @@ class Room:
 
     def fill_with_bots(self):
         """Fill the room with bots and start the game"""
-        server = self.game.server
         current_players = len(self.clients)
-        bots_needed = self.config.players_per_room - current_players
+        bots_needed = self.server.config.players_per_room - current_players
 
         if bots_needed <= 0:
             return
@@ -354,7 +349,7 @@ class Room:
 
         # Add bots to the room
         for _ in range(bots_needed):
-            server.create_ai_for_train(self)
+            self.server.create_ai_for_train(self)
 
         # Start the game
         self.start_game()

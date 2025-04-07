@@ -136,13 +136,12 @@ class Server:
 
     def create_room(self, running):
         """Create a new room with specified number of players"""
-        room_id = str(uuid.uuid4())[:8]
-        new_room = Room(self.config, room_id, running, server=self)
+        room = Room(self, running)
         logger.info(
-            f"Created new room {room_id} with {self.config.players_per_room} players"
+            f"Created new room {room.id} with {self.config.players_per_room} players"
         )
-        self.rooms[room_id] = new_room
-        return new_room
+        self.rooms[room.id] = room
+        return room
 
     def get_available_room(self):
         """Get an available room or create a new one if needed"""
