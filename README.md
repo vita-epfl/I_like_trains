@@ -10,8 +10,8 @@ passengers. The more passengers a train is carrying, the longer and slower it be
 to implement various strategies while avoiding collisions.
 
 Your objective will be to modify [common/agents/agent.py](/common/agents/agent.py) file and implement logic to control
-your train. You may add additional files to the directory but do not
-modify any existing files, except for [common/agents/agent.py](/common/agents/agent.py).
+your train. You may add additional files to the directory but do not modify any existing files outside of [common/agents](/common/agents).
+You can make different versions of your agent by copying the [agent.py](/common/agents/agent.py) file, renaming it and modifying it.
 
 ## Setup Instructions
 
@@ -34,54 +34,56 @@ pip install -r requirements.txt
 
 ### 3. (Optional) Start a local server for testing
 
-You can start a local server by running `python -m server` if you want to test the client locally. This will start a server on `0.0.0.0:5555`.
+You can start a local server by running `python -m server` if you want to test the client locally. This will start a server on `0.0.0.0:5555` (the host set in the configuration file).
 Then, open another terminal, go to the project folder, and run `python -m client config.json` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
 
 This allows:
-    - You to connect locally with your own client
-    - Other players to connect to your game if you share your IP address with them
-    - This is useful for organizing your own competitions or testing with friends
+- You to connect locally with your own client
+- Other players to connect to your game if you share your IP address with them
+- This is useful for organizing your own competitions or testing with friends
 
 ### 4. Select a Game Mode
 
 The game supports three different modes that can be set in the `config.json` file:
 
-
-- **Agent Mode** (`"game_mode": "agent"`): In this mode, the client connects to a remote server to compete against other players' agents in a battle. The client uses the agent specified in the `agent` field of the configuration file.
+- **Agent Mode** (`"game_mode": "agent"`): In this mode, the client connects to a remote server to compete against other players' agents. The client uses the agent specified in the `agent` field of the configuration file.
   
-- **Manual Mode** (`"game_mode": "manual"`): In this mode, the client connects to a remote server to compete against other players' agents in a battle. The client does not use an agent and instead controls the train manually with keyboard arrows.
+- **Manual Mode** (`"game_mode": "manual"`): In this mode, the client connects to a remote server to compete against other players' agents. The client does not use an agent and instead controls the train manually with keyboard arrows.
 
-- **Observer Mode** (`"game_mode": "observer"`): This mode will make your client an observer. If no other client connects, the agents specified in the `local_agents` list in `config.json` will compete against each other, allowing you to test and compare different versions of your agents. For better organization, it's recommended to store your agents in the "agents" folder.
+- **Observer Mode** (`"game_mode": "observer"`): This mode will make your client an observer and you can only watch the game without interacting. If no other client connects, random agents from the `agents` list in `config.json` will compete against each other, allowing you to test and compare different versions of your agents. For better organization, it's recommended to store your agents in the "agents" folder.
 
 How the modes affect the client and server:
 
 - In **Agent/Manual Mode**:
-  - The client connects to the remote IP specified in the configuration (it can also be your local ip if you want to test it locally).
+  - The client connects to the IP specified in the configuration (it can be your local IP if you want to test it locally).
   - The client initializes with the agent specified in `client.agent` (in the `config.json` file). 
-  - The server hosts a game on `0.0.0.0` allowing multiple clients to connect (locally and remotely) and compete.
 
 - In **Observer Mode**:
-  - The client connects to localhost and acts as an observer, only displaying the game.
-  - The server creates a room with one slot for the observer client and fills the rest with AI clients based on the agents specified in `server.agents` (in the `config.json` file).
+  - The client connects to the IP specified in the configuration and acts as an observer, only displaying the game.
   - This allows you to watch different versions of your agents compete against each other.
 
-Modify the game modes in `config.json`. Modify the one in "client" according to the mode you want to use.
+Modify the game mode in "client" according to the mode you want to use.
 
 ### 5. Set up the agents for agent/manual and observer modes
 
 In the `config.json` file, you can find the configuration for the agent/manual and observer modes.
-Set up your sciper, a train name, and the name of the agent file. This agent file will be used to compete against the other agents in the agent/manual modes.
+Set up the game mode you want to play, your sciper, a train name, and the name of the agent file. This agent file will be used to compete against the other agents in the agent/manual modes.
 
-For the observer mode, set up a list containing the names and agent file names for the agents you want to test locally. You can add as many agents as you want.
+For the observer mode, you don't need to specify information. If you want to join a room as an observer to watch some of your agents competing against each other, 
+set up a list containing the names and agent file names in the `agents` list in `config.json` in the `server` section. You can add as many agents as you want. Make sure that the server you create has enough empty slots for them (the `nb_clients_per_room` parameter).
 
 Example configuration in `config.json`:
 ```json
 "client": {
+    "game_mode": "agent",
+    "sciper": "000000",
     "agent": {
-        "sciper": "000000",
         "nickname": "Player",
         "agent_file_name": "agent.py"
     },
+    "manual": {
+        "nickname": "Player2"
+    }
 },
 "server": {
     "agents": [
@@ -104,7 +106,7 @@ If you are connecting to a remote server, you need to know the IP address and po
 To run the client and connect to the server, replace `<ip_adress>` in the config file with the IP address of the server.
 
 ```bash
-python -m client config.json
+python -m client
 ```
 
 Keep in mind that events are not being processed when the pygame title bar is dragged due to a pygame limitation. Doing so
@@ -122,7 +124,7 @@ There are several ways to play and test your agent:
 
 2. **Run a local server + two clients**:
    - Start a local server in one terminal: `python -m server`
-   - Start two clients in two different terminals: `python -m client config.json`
+   - Start two clients in two different terminals: `python -m client`
    - **Pros**: Allows testing without depending on remote server availability, and an easier debugging process
    - **Cons**: Requires managing multiple terminals
 
@@ -140,7 +142,7 @@ During the final evaluation:
 
 ## Game rules
 
-- The goal is to collect as many passengers (they will appear at random positions on the map), incrementing your number of wagons, and then deliver them to the delivery zone. The number above each passenger spot indicates how many passengers are at that location. You can find the list of passengers with `self.passengers` (in `client/agent.py`).
+- The goal is to collect as many passengers (they will appear at random positions on the map), incrementing your number of wagons, and then deliver them to the delivery zone. The number above each passenger spot indicates how many passengers are at that location. You can find the list of passengers with `self.passengers` (in your `common/agents/agent.py`).
 
 - The train cannot change its direction to the opposite, only to the left or right.
 
@@ -163,8 +165,8 @@ The server is responsible for managing client connections and game synchronizati
 The server files are included here so you can have a better understanding of how the management of the game works. 
 
 - `server.py` : Manages client connections and game synchronization.
-- `game.py` : Contains the main game logic.
-- `train.py` : Defines the Train class and its behaviors.
+- `game.py` : Contains the main game logic. Each train moves by self.cell_size each time the get_move() method is called.
+- `train.py` : Defines the Train class and its behaviors. 
 - `passenger.py` : Manages passenger logic.
 - `ai_client.py` : Manages AI clients (when a player disconnects).
 - `delivery_zone.py` : Manages delivery zones.
@@ -181,6 +183,10 @@ The client is responsible for managing the game display and user interactions. I
 - `agent.py` : Controls the train's behavior.
 - `ui.py` : Manages the user interface to enter train name and sciper.
 
+### 3. Agents (folder `common/agents/`)
+The agents are the files that control the behavior of the train. You can find the implementation of the `BaseAgent` class in `common/base_agent.py`. 
+
+The agents are stored in the `common/agents` folder. You can add your own agent by creating a new file in this folder. The agent file should contain a class that inherits from the `BaseAgent` class and implements the `get_move()` method. You can name them as you want and import them in the config to test them.
 
 ### How the client data is updated from the server
 
@@ -195,20 +201,16 @@ The client is responsible for managing the game display and user interactions. I
 
 ### Agent class
 
-The Agent class inherits from the `BaseAgent` class. You can find the implementation of the `BaseAgent` class in `client/base_agent.py`. 
+The Agent class inherits from the `BaseAgent` class. You can find the implementation of the `BaseAgent` class in `common/base_agent.py`. 
 The class is initialized with the following parameters:
 
 - `self.nickname` : The name of the agent.
 - `self.network` : The network object to handle communication.
 - `self.logger` : The logger object.
-- `self.is_dead` : Whether the agent/train is currently dead or alive.
 
 And the following attributes:
 
-- `self.death_time` : The time when the agent last died.
-- `self.respawn_cooldown` : The cooldown time before respawning.
-- `self.waiting_for_respawn` : Whether the agent is waiting for respawn.
-- `self.game_width` and `self.game_height` are initialized later by the server but are still accessible in the program. They are the width and height of the game grid.
+- `self.game_width` and `self.game_height` : initialized later by the server but are still accessible in the program. They are the width and height of the game grid.
 
 This parameters and attributes are not supposed to be modified. They are updated by the client, receiving the game state from the server. Modifying them may lead to a desynchronization between the information of the client and the real game state managed by the server.
 On the other hand, attributes can be added to the Agent class to store additional information (related to your agent strategy).
@@ -227,7 +229,7 @@ or by direcly checking what is returned by the `to_dict()` method in each class.
 
 ### Agent (agent.py)
 
-You must implement an agent that controls your train. The main method to implement in `client/agent.py` is:
+You must implement an agent that controls your train. The main method to implement in `agents/agent.py` (or any other agent file you will create in the `agents` folder) is:
 
 ```python
 def get_move(self):
@@ -236,11 +238,9 @@ def get_move(self):
     """
 ```
 
-- Your train exists in a 2D grid. You can tell your train to turn left, right, or continue going straight. Your code should live in [client/agent.py](/client/agent.py) and any additional files you might need. You can also instruct your train to drop
-wagons.
+- Your train exists in a 2D grid. You can tell your train to turn left, right, or continue going straight. Your code should live in [common/agents/agent.py](/common/agents/agent.py) and any additional files you might need. You can also instruct your train to drop wagons.
 
-- Your train can drop wagons. The train will then get a speed boost and enter a boost cooldown period, during which the train
-cannot drop wagons. Remember, passengers are automiatcally dropped off in the delivery zone.
+- Your train can drop wagons. The train will then get a speed boost and enter a boost cooldown period, during which the train cannot drop wagons. Remember, passengers are automatically dropped off in the delivery zone.
 
 ## Evaluation
 
@@ -272,7 +272,6 @@ pip freeze > requirements.txt
 Some constants are available in the config.json file to customize your graphical interface:
 - `screen_width`: width of the game window. 
 - `screen_height`: height of the game window.
-- `cell_size`: size of each cell in the grid.
 - `leaderboard_width`: width of the leaderboard.
 
 ### Logging System
