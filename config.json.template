@@ -1,0 +1,32 @@
+{
+    "client": {
+        "host": "127.0.0.1",
+        "port": 5555,
+        "manual_spawn": false,
+        "game_mode": "agent",
+        "sciper": "000000",
+        "agent": {
+            "nickname": "Player1",
+            "agent_file_name": "agent.py"
+        },
+        "manual": {
+            "nickname": "Player2"
+        }
+    },
+    "server": {
+        "host": "0.0.0.0",
+        "port": 5555,
+        "nb_clients_per_room": 2,
+        "waiting_time_before_bots_seconds": 30,
+        "agents": [
+            {
+                "nickname": "Agent1",
+                "agent_file_name": "agent_example1.py"
+            },
+            {
+                "nickname": "Agent2",
+                "agent_file_name": "agent_example2.py"
+            }
+        ]
+    }
+}

@@ -32,7 +32,20 @@ git clone https://github.com/vita-epfl/I_like_trains.git
 pip install -r requirements.txt
 ```
 
-### 3. (Optional) Start a local server for testing
+### 3. Rename config.json.template to config.json
+
+```bash
+# Linux/Mac
+mv config.json.template config.json
+
+# Windows (Command Prompt)
+copy config.json.template config.json
+
+# Windows (PowerShell)
+Copy-Item -Path config.json.template -Destination config.json
+```
+
+### 4. (Optional) Start a local server for testing
 
 You can start a local server by running `python -m server` if you want to test the client locally. This will start a server on `0.0.0.0:5555` (the host set in the configuration file).
 Then, open another terminal, go to the project folder, and run `python -m client config.json` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
@@ -42,7 +55,7 @@ This allows:
 - Other players to connect to your game if you share your IP address with them
 - This is useful for organizing your own competitions or testing with friends
 
-### 4. Select a Game Mode
+### 5. Select a Game Mode
 
 The game supports three different modes that can be set in the `config.json` file:
 
@@ -64,7 +77,7 @@ How the modes affect the client and server:
 
 Modify the game mode in "client" according to the mode you want to use.
 
-### 5. Set up the agents for agent/manual and observer modes
+### 6. Set up the agents for agent/manual and observer modes
 
 In the `config.json` file, you can find the configuration for the agent/manual and observer modes.
 Set up the game mode you want to play, your sciper, a train name, and the name of the agent file. This agent file will be used to compete against the other agents in the agent/manual modes.
@@ -99,7 +112,7 @@ Example configuration in `config.json`:
 }
 ```
 
-### 6. Run the client
+### 7. Run the client
 
 If you are connecting to a remote server, you need to know the IP address and port of the server. If you are outside of EPFL network, you will need to use a VPN to connect to the network.
 
