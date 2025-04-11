@@ -7,7 +7,6 @@ import threading
 import time
 import logging
 from server.passenger import Passenger
-import sys
 import importlib
 
 
@@ -26,20 +25,20 @@ class AINetworkInterface:
 
     def send_direction_change(self, direction):
         """Change the direction of the train using the server's function"""
-        if self.nickname in self.room.game.trains and self.room.game.is_train_alive(
+        if self.room.game.contains_train(
             self.nickname
         ):
             self.room.game.trains[self.nickname].change_direction(direction)
             return True
         else:
-            logger.warning(
-                f"Failed to change direction for train {self.nickname}. Train in room's trains: {self.nickname in self.room.game.trains}, is train alive: {self.room.game.is_train_alive(self.nickname)}"
+            logger.error(
+                f"Failed to change direction for train {self.nickname}. Train is in game: {self.nickname in self.room.game.trains}"
             )
         return False
 
     def send_drop_wagon_request(self):
         """Drop a wagon from the train using the server's function"""
-        if self.nickname in self.room.game.trains and self.room.game.is_train_alive(
+        if self.nickname in self.room.game.trains and self.room.game.contains_train(
             self.nickname
         ):
             last_wagon_position = self.room.game.trains[self.nickname].drop_wagon()
@@ -69,14 +68,14 @@ class AIClient:
     using the Agent class from the client
     """
 
-    def __init__(self, room, nickname, ai_agent_file_name=None):
+    def __init__(self, room, nickname, ai_agent_file_name=None, waiting_for_respawn=False, is_dead=False):
         """Initialize the AI client"""
         self.room = room
         self.game = room.game
         self.nickname = nickname  # The AI agent name
 
-        self.is_dead = False
-        self.waiting_for_respawn = False
+        self.is_dead = is_dead
+        self.waiting_for_respawn = waiting_for_respawn
         self.death_time = 0
         self.respawn_cooldown = 0
 
@@ -97,20 +96,16 @@ class AIClient:
             logger.info(f"Importing module: {module_path}")
 
             module = importlib.import_module(module_path)
-            self.agent = module.Agent(
-                nickname, self.network, logger="server.ai_agent"
-            )
-            logger.info(
-                f"AI agent {nickname} initialized using {ai_agent_file_name}"
-            )
-                
+            self.agent = module.Agent(nickname, self.network, logger="server.ai_agent")
+            logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name}")
+
         except ImportError as e:
             logger.error(f"Failed to import AI agent for {nickname}: {e}")
             raise e
         except Exception as e:
             logger.error(f"Failed to import AI agent for {nickname}: {e}")
             raise e
-            
+
         self.agent.delivery_zone = self.game.delivery_zone.to_dict()
 
         # Start the AI thread
@@ -163,11 +158,16 @@ class AIClient:
             self.agent.game_width = self.game_width
             self.agent.game_height = self.game_height
 
-            if not self.is_dead:
+            # Update agent state only if train is alive and game contains train
+            if not self.is_dead and self.game.contains_train(self.nickname):
                 self.agent.update_agent()
 
             # Add automatic respawn logic
-            if not self.game.trains[self.nickname].alive and self.waiting_for_respawn:
+            # logger.debug(f"Is dead: {self.is_dead}, waiting for respawn: {self.waiting_for_respawn}")
+            if (
+                self.is_dead
+                and self.waiting_for_respawn
+            ):
                 elapsed = time.time() - self.death_time
                 if elapsed >= self.respawn_cooldown:
                     logger.debug(

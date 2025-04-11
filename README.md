@@ -296,7 +296,6 @@ Some constants are available in the config.json file to customize your graphical
 - `screen_width`: width of the game window. 
 - `screen_height`: height of the game window.
 - `leaderboard_width`: width of the leaderboard.
-- `add_suffix_to_nickname`: whether to add a random suffix to the nickname.
 
 ### Logging System
 
@@ -313,3 +312,76 @@ Available log levels (from most to least verbose):
 - CRITICAL: Critical errors that prevent the game from running.
 
 Logs are displayed in the console and include timestamps, module name, and log level.
+
+## Configuration Files
+
+The game's configuration is managed through a structured mapping system defined in the following files:
+
+- `common/config.py`: The main configuration class that loads and validates the JSON configuration file.
+- `common/client_config.py`: Contains all client-specific configuration options like connection details, display settings, game mode, and timeout values.
+- `common/server_config.py`: Contains all server-specific configuration options like room size, game rules, respawn times, and AI agent settings.
+
+Students are encouraged to read these files to understand what each configuration option does and its default value. The configuration system uses Pydantic models to provide clear documentation, type validation, and default values for all settings.
+
+## Version Management and Updates
+
+### Checking Your Version
+
+To ensure you have the latest version of the project:
+
+1. **For Git users**:
+   ```bash
+   # Check your current commit hash
+   git rev-parse HEAD
+   
+   # Check for updates without applying them
+   git fetch origin
+   git log HEAD..origin/main --oneline
+   ```
+   If the second command shows any commits, your local version is behind the remote repository.
+
+2. **For archive users** (zip/tar.gz):
+   - Check the download date of your archive
+   - Visit the course website or repository page to see if a newer version is available
+
+### Updating Your Project
+
+1. **For Git users**:
+   ```bash
+   # First, backup your work (especially your agent files and config.json)
+   cp -r common/agents/your_agent.py common/agents/your_agent_backup.py
+   cp config.json config.json.backup
+   
+   # Then pull the latest changes
+   git pull origin main
+   ```
+
+2. **For archive users**:
+   - Download the latest archive
+   - Extract it to a new directory
+   - Copy your agent files and configuration from the old directory to the new one
+
+### Handling Conflicts
+
+When updating, you might encounter conflicts, especially if you've modified files that were also updated in the repository.
+
+1. **For `config.json` conflicts**:
+   - To avoid conflicts, consider keeping a separate configuration file (e.g., `my_config.json`) with your personal settings
+   - Use this file for your development and only update the original `config.json` when necessary
+   - Alternatively, only modify the specific sections you need (like your agent configuration) and leave the rest unchanged
+
+2. **For other file conflicts**:
+   - You should generally not modify the core game files outside the designated areas
+   - If you encounter conflicts in these files, you may need assistance from a TA
+   - In Git, you can see which files have conflicts with `git status`
+
+### Backing Up Your Work
+
+Regular backups are essential to prevent data loss:
+
+- **Manual backups**: Regularly copy your important files (especially your agent implementations) to a separate location
+- **Version control**: If using Git, commit your changes frequently to track your progress
+- **Automated backups**: Use your operating system's backup features (Time Machine on macOS, File History on Windows) for regular automated backups
+- **Cloud storage**: Consider using cloud storage services for an additional layer of protection
+
+**Important**: Always back up your work before updating to a new version of the project.

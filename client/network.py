@@ -9,6 +9,8 @@ import logging
 import threading
 import time
 
+from common.version import EXPECTED_CLIENT_VERSION
+
 
 # Configure logging
 logging.basicConfig(
@@ -96,6 +98,7 @@ class NetworkManager:
         """Send message to server"""
         if not self.socket:
             logger.error("Cannot send message: UDP socket not created")
+            self.disconnect(True)
             return False
 
         try:
@@ -119,67 +122,59 @@ class NetworkManager:
             return False
 
     def receive_game_state(self):
-        """Thread that receives game state updates"""
-        buffer = ""
+        """Thread that receives game state updates from the server"""
+        # Create a custom trace level that's lower than debug
+        # TRACE_LEVEL = 5  # Lower than DEBUG which is 10
+        # logging.addLevelName(TRACE_LEVEL, "TRACE")
+
+        # def trace(self, message, *args, **kwargs):
+        #     if self.isEnabledFor(TRACE_LEVEL):
+        #         self._log(TRACE_LEVEL, message, args, **kwargs)
+
+        # logging.Logger.trace = trace
 
         while self.running:
-            # try:
-            # For UDP, we use recvfrom which returns the data and address
-            if self.socket is None:
-                logger.debug("Socket closed, exiting receive thread")
-                break
+            try:
+                # Wait for data from the server
+                if self.socket is None:
+                    logger.debug("Socket closed, exiting receive thread")
+                    break
 
-            # Define a timeout to periodically check self.running
-            self.socket.settimeout(0.5)
+                # Define a timeout to periodically check self.running
+                # Use a shorter timeout to ensure we don't miss pings, especially when train is dead
+                self.socket.settimeout(0.1)
 
-            # Check if we've received a ping recently
-            current_time = time.time()
-            if (
-                current_time - self.last_ping_time
-                > self.client.config.server_timeout_seconds
-            ):
-                logger.warning(
-                    f"Server hasn't sent a ping for {self.client.config.server_timeout_seconds} seconds, disconnecting"
-                )
-                # Disconnect the client
-                self.disconnect(stop_client=True)
-                break
+                # Check if we've received a ping recently
+                current_time = time.time()
+                if (
+                    current_time - self.last_ping_time
+                    > self.client.config.server_timeout_seconds
+                ):
+                    logger.warning(
+                        f"Server hasn't sent a ping for {self.client.config.server_timeout_seconds} seconds, disconnecting"
+                    )
+                    # Disconnect the client
+                    self.disconnect(stop_client=True)
+                    break
 
-            # For UDP, we use recvfrom which returns the data and address
-            data, addr = self.socket.recvfrom(65536)
+                # For UDP, we use recvfrom which returns the data and address
+                data, addr = self.socket.recvfrom(65536)
 
-            if not data:
-                continue
-
-            # Add data to buffer
-            buffer += data.decode("utf-8")
-
-            # Process complete messages
-            while "\n" in buffer:
-                # Extract complete message
-                message, buffer = buffer.split("\n", 1)
-                if not message:
+                if not data:
                     continue
 
-                # try:
-                # Check if the message contains multiple JSON objects
-                message_str = message
-                messages = message_str.split("\n")
+                # Process all messages in the packet
+                messages = data.decode().split("\n")
+                for message in messages:
+                    if not message:
+                        continue
 
-                for msg in messages:
-                    if not msg.strip():
-                        continue  # Skip empty messages
-
-                    message_data = json.loads(msg)
-
-                    # Process the message based on its type
-                    if "type" in message_data:
-                        message_type = message_data["type"]
+                    try:
+                        message_data = json.loads(message)
+                        message_type = message_data.get("type")
 
                         if message_type == "state":
-                            self.client.handle_state_data(
-                                message_data["data"]
-                            )
+                            self.client.handle_state_data(message_data["data"])
 
                         elif message_type == "spawn_success":
                             self.client.is_dead = False
@@ -202,44 +197,49 @@ class NetworkManager:
                             self.client.handle_game_status(message_data)
 
                         elif message_type == "join_success":
-                            logger.debug("Received join success response")
-
+                            expected_version = message_data["expected_version"]
+                            if (expected_version != EXPECTED_CLIENT_VERSION):
+                                logger.error(f"Client version {EXPECTED_CLIENT_VERSION} does not match server version {expected_version}. Please update your client.")
+                                self.disconnect()
+                            
                         elif message_type == "drop_wagon_success":
-                            self.client.handle_drop_wagon_success(
-                                message_data
-                            )
+                            self.client.handle_drop_wagon_success(message_data)
                         elif message_type == "drop_wagon_failed":
                             pass
 
                         elif message_type == "leaderboard":
-                            self.client.handle_leaderboard_data(
-                                message_data["data"]
-                            )
+                            self.client.handle_leaderboard_data(message_data["data"])
 
                         elif message_type == "waiting_room":
-                            self.client.handle_waiting_room_data(
-                                message_data["data"]
-                            )
+                            self.client.handle_waiting_room_data(message_data["data"])
 
                         elif message_type == "name_check":
-                            if message_data['available']:
-                                logger.info(f"Name available: {message_data['available']}")
+                            if message_data["available"]:
+                                logger.info(
+                                    f"Name available: {message_data['available']}"
+                                )
                             else:
-                                logger.error(f"Name available: {message_data['available']}")
-                            self.client.name_check_result = (
-                                message_data.get("available", False)
+                                logger.error(
+                                    f"Name available: {message_data['available']}"
+                                )
+                            self.client.name_check_result = message_data.get(
+                                "available", False
                             )
                             self.client.name_check_received = True
 
                         elif message_type == "sciper_check":
-                            self.client.sciper_check_result = (
-                                message_data.get("available", False)
+                            self.client.sciper_check_result = message_data.get(
+                                "available", False
                             )
                             self.client.sciper_check_received = True
-                            if message_data['available']:
-                                logger.info(f"Sciper available: {message_data['available']}")
+                            if message_data["available"]:
+                                logger.info(
+                                    f"Sciper available: {message_data['available']}"
+                                )
                             else:
-                                logger.error(f"Sciper available: {message_data['available']}")
+                                logger.error(
+                                    f"Sciper available: {message_data['available']}"
+                                )
 
                         elif message_type == "best_score":
                             logger.info(
@@ -257,21 +257,15 @@ class NetworkManager:
                             return
 
                         elif message_type == "game_over":
-                            logger.info(
-                                "Game is over. Received final scores."
-                            )
-                            self.client.handle_game_over(
-                                message_data["data"]
-                            )
+                            logger.info("Game is over. Received final scores.")
+                            self.client.handle_game_over(message_data["data"])
 
                             # Disconnect from server after a short delay
                             def disconnect_after_delay():
                                 time.sleep(
                                     2
                                 )  # Wait 2 seconds to ensure all final data is received
-                                logger.info(
-                                    "Disconnecting from server after game over"
-                                )
+                                logger.info("Disconnecting from server after game over")
                                 self.disconnect()
 
                             disconnect_thread = threading.Thread(
@@ -286,13 +280,26 @@ class NetworkManager:
                             )
 
                         elif message_type == "initial_state":
-                            self.client.handle_initial_state(
-                                message_data["data"]
-                            )
+                            self.client.handle_initial_state(message_data["data"])
                         else:
-                            logger.warning(
-                                f"Unknown message type: {message_type}"
-                            )
+                            logger.warning(f"Unknown message type: {message_type}")
+                    except json.JSONDecodeError:
+                        logger.error(f"Invalid JSON received: {message}")
+                    except Exception as e:
+                        logger.error(f"Error processing message: {e}")
+
+            except socket.timeout:
+                # Don't log timeout errors at all to avoid spam
+                # logger.trace("Socket timeout in receive_game_state, continuing to listen")
+                continue
+            except Exception as e:
+                # Log other errors but don't disconnect
+                if "timed out" in str(e):
+                    # This is redundant with the socket.timeout catch above, but kept for safety
+                    # logger.trace("Socket timeout in receive_game_state, continuing to listen")
+                    continue
+                else:
+                    logger.error(f"Error in receive_game_state thread: {e}")
 
     def verify_connection(self):
         """Verify that the connection to the server is actually running on the specified port
@@ -307,11 +314,9 @@ class NetworkManager:
             # Reset name check variables
             self.client.name_check_received = False
 
-            # Generate a unique test name using timestamp
-            test_name = f"test_{int(time.time())}"
 
             # Send a ping request (this is allowed for unregistered clients)
-            check_message = {"type": "ping", "nickname": test_name}
+            check_message = {"type": "ping"}
             success = self.send_message(check_message)
 
             if not success:

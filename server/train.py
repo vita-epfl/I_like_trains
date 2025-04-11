@@ -200,7 +200,7 @@ class Train:
         new_position = (new_x, new_y)
 
         # Check collisions and bounds
-        self.check_collisions(new_position, trains)
+        self.check_collisions_with_trains(new_position, trains)
         self.check_out_of_bounds(new_position, screen_width, screen_height)
 
         if not self.alive:
@@ -215,9 +215,9 @@ class Train:
         # Update position
         self.set_position(new_position)
 
-    def kill(self):
+    def kill(self, train_nicknames, death_reason):
         self.set_alive(False)
-        self.handle_death(self.nickname)
+        self.handle_death(train_nicknames, death_reason)
         self.reset()
 
     def to_dict(self):
@@ -289,7 +289,7 @@ class Train:
             self.alive = alive
             self._dirty["alive"] = True
 
-    def check_collisions(self, new_position, all_trains):
+    def check_collisions_with_trains(self, new_position, all_trains):
         for wagon_pos in self.wagons:
             if new_position == wagon_pos:
                 collision_msg = (
@@ -297,9 +297,10 @@ class Train:
                 )
                 logger.info(collision_msg)
                 self.client_logger.info(collision_msg)
-                self.kill()
+                death_reason = "self_collision"
+                self.kill([self.nickname], death_reason)
                 return True
-
+            
         for train in all_trains.values():
             # If the train we are checking is dead or the train is ours, skip
             if train.nickname == self.nickname or not train.alive:
@@ -311,8 +312,8 @@ class Train:
                 )
                 logger.info(collision_msg)
                 self.client_logger.info(collision_msg)
-                train.kill()
-                self.kill()
+                death_reason = "collision_with_train"
+                self.kill([self.nickname, train.nickname], death_reason)
                 return True
 
             # Check collision with wagons
@@ -321,7 +322,8 @@ class Train:
                     collision_msg = f"Train {self.nickname} collided with wagon of train {train.nickname}"
                     logger.info(collision_msg)
                     self.client_logger.info(collision_msg)
-                    self.kill()
+                    death_reason = "collision_with_wagon"
+                    self.kill([self.nickname], death_reason)
                     return True
 
         return False
@@ -330,7 +332,7 @@ class Train:
         """Check if the train is out of the screen"""
         x, y = new_position
         if x < 0 or x >= screen_width or y < 0 or y >= screen_height:
-            self.kill()
+            self.kill([self.nickname], "out_of_bounds")
             logger.debug(
                 f"Train {self.nickname} is dead: out of the screen. Coordinates: {new_position}"
             )

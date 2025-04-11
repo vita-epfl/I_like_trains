@@ -163,7 +163,17 @@ class GameState:
             return
 
         # Log the cooldown
-        logger.info(f"Train is dead. Cooldown: {data['remaining']}s")
+        if data['reason'] == 'self_collision':
+            logger.info(f"Train died from collision with its own wagon. Cooldown: {data['remaining']}s")
+        elif data['reason'] == 'collision_with_train':
+            logger.info(f"Train died from collision with another train. Cooldown: {data['remaining']}s")
+        elif data['reason'] == 'collision_with_wagon':
+            logger.info(f"Train died from collision with another train's wagon. Cooldown: {data['remaining']}s")
+        elif data['reason'] == 'out_of_bounds':
+            logger.info(f"Train died from going out of bounds. Cooldown: {data['remaining']}s")
+        else:
+            logger.info(f"Train died for unknown reason: {data['reason']}. Cooldown: {data['remaining']}s")
+        
 
         self.client.is_dead = True
         self.client.death_time = time.time()

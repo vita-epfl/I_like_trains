@@ -216,7 +216,13 @@ class Game:
         """Update the number of passengers based on the number of trains"""
         # Calculate the desired number of passengers based on the number of alive trains
         self.desired_passengers = (
-            len([train for train in self.trains.values() if train.alive])
+            len(
+                [
+                    train
+                    for train in self.trains.values()
+                    if self.contains_train(train.nickname)
+                ] # This is a list of all trains that are still alive in the game
+            )
         ) // TRAINS_PASSENGER_RATIO
 
         # Add or remove passengers if necessary
@@ -280,7 +286,7 @@ class Game:
             return True
         return False
 
-    def send_cooldown(self, nickname):
+    def send_cooldown(self, nickname, death_reason):
         """Remove a train and update game size"""
         if nickname in self.trains:
             # Register the death time
@@ -292,9 +298,8 @@ class Game:
 
             # Notify the client of the cooldown
             self.send_cooldown_notification(
-                nickname, self.config.respawn_cooldown_seconds
+                nickname, self.config.respawn_cooldown_seconds, death_reason
             )
-
             # If the client is a bot
             if nickname in self.ai_clients:
                 # Get the client object
@@ -308,10 +313,11 @@ class Game:
             logger.error(f"Train {nickname} not found in game")
             return False
 
-    def handle_train_death(self, nickname):
-        self.send_cooldown(nickname)
+    def handle_train_death(self, train_nicknames, death_reason):
+        for nickname in train_nicknames:
+            self.send_cooldown(nickname, death_reason)
         self.update_passengers_count()
-
+        
     def get_train_cooldown(self, nickname):
         """Get remaining cooldown time for a train"""
         if nickname in self.dead_trains:
@@ -320,9 +326,9 @@ class Game:
             return remaining
         return 0
 
-    def is_train_alive(self, nickname):
-        """Check if a train is alive"""
-        return nickname in self.trains and self.trains[nickname].alive
+    def contains_train(self, nickname):
+        """Check if a train is in the game"""
+        return nickname in self.trains
 
     def check_collisions(self):
         for _, train in self.trains.items():

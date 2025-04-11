@@ -6,6 +6,7 @@ import time
 
 from common.server_config import ServerConfig
 from server.game import Game
+from server.ai_client import AIClient
 
 # Configure logger
 logger = logging.getLogger("server.room")
@@ -45,7 +46,7 @@ class Room:
         running,
         server_socket,
         send_cooldown_notification,
-        remove_room
+        remove_room,
     ):
         self.config = config
         self.id = room_id
@@ -82,6 +83,7 @@ class Room:
         self.used_ai_names = set()  # Track AI names that are already in use
         self.ai_clients = {}  # Maps train names to AI clients
         self.AI_NAMES = AI_NAMES  # Store the AI names as an instance attribute
+        self.used_nicknames = set(self.clients.keys())
 
         logger.info(f"Room {room_id} created with number of clients {nb_players_max}")
 
@@ -134,118 +136,6 @@ class Room:
                 f"Game started in room {self.id} with {len(self.clients)} clients"
             )
 
-    def get_available_ai_name(self):
-        """Get an available AI name that is not already in use"""
-        for name in self.AI_NAMES:
-            if name not in self.used_ai_names:
-                self.used_ai_names.add(name)
-                return name
-
-        # If all names are used, create a generic name with a random number
-        logger.debug("All AI names are used, creating a generic name")
-        generic_name = f"Bot {random.randint(1000, 9999)}"
-        self.used_ai_names.add(generic_name)
-        return generic_name
-
-    def create_ai_for_train(
-        self, train_nickname_to_replace=None, ai_nickname=None, ai_agent_file_name=None
-    ):
-        """Create an AI client to control a train"""
-
-        # Choose an AI name that's not already in use
-        if train_nickname_to_replace is None:
-            # Creating a new AI train (not replacing an existing one)
-            logger.info(f"Creating new AI train with name {ai_nickname}")
-
-            # Add the train to the game
-            if self.game.add_train(ai_nickname):
-                # Add the AI client to the room
-                self.clients[("AI", ai_nickname)] = ai_nickname
-
-                # Import the AI agent from the config path
-                logger.info(
-                    f"Creating AI client {ai_nickname} using agent from {ai_agent_file_name}"
-                )
-                from server.ai_client import AIClient
-
-                self.ai_clients[ai_nickname] = AIClient(
-                    self, ai_nickname, ai_agent_file_name
-                )
-
-                # Add the ai_client to the game
-                self.game.ai_clients[ai_nickname] = self.ai_clients[ai_nickname]
-
-                logger.info(f"Added new AI train {ai_nickname} to room {self.id}")
-                return ai_nickname
-            else:
-                logger.error(f"Failed to add new AI train {ai_nickname} to game")
-                return None
-
-        # Check if there's already an AI controlling this train
-        if train_nickname_to_replace in self.ai_clients:
-            logger.warning(f"AI already exists for train {train_nickname_to_replace}")
-            return
-
-        # Change the train's name in the game
-        if train_nickname_to_replace in self.game.trains:
-            # Save the train's color
-            if train_nickname_to_replace in self.game.train_colors:
-                train_color = self.game.train_colors[train_nickname_to_replace]
-                self.game.train_colors[ai_nickname] = train_color
-                del self.game.train_colors[train_nickname_to_replace]
-
-            # Get the train object
-            train = self.game.trains[train_nickname_to_replace]
-
-            # Update the train's name
-            train.nickname = ai_nickname
-
-            # Move the train to the new key in the dictionary
-            self.game.trains[ai_nickname] = train
-            del self.game.trains[train_nickname_to_replace]
-            logger.debug(
-                f"Moved train {train_nickname_to_replace} to {ai_nickname} in game"
-            )
-
-            # # Mark trains as dirty to update clients
-            # room.game._dirty["trains"] = True
-
-            # Notify clients about the train rename
-            state_data = {
-                "type": "state",
-                "data": {"rename_train": [train_nickname_to_replace, ai_nickname]},
-            }
-
-            state_json = json.dumps(state_data) + "\n"
-            # Iterate over a copy of the client addresses to avoid issues if the list changes
-            # Only send to non-AI clients
-            for client_addr in list(self.clients.keys()):
-                # Ensure it's a real client address tuple (IP, port), not an AI marker
-                if (
-                    isinstance(client_addr, tuple)
-                    and len(client_addr) == 2
-                    and isinstance(client_addr[1], int)
-                ):
-                    try:
-                        self.server_socket.sendto(state_json.encode(), client_addr)
-                    except Exception as e:
-                        # Log error but continue trying other clients
-                        logger.error(
-                            f"Error sending train rename notification to client {client_addr}: {e}"
-                        )
-                # else: # Optional: Log skipped AI clients if needed for debugging
-                #    logger.debug(f"Skipping rename notification for AI client: {client_addr}")
-
-            # Create the AI client with the new name
-            self.ai_clients[ai_nickname] = AIClient(
-                self, ai_nickname, ai_agent_file_name
-            )
-
-        else:
-            logger.warning(
-                f"Train {train_nickname_to_replace} not found in game, cannot create AI client"
-            )
-
     def game_timer(self):
         """
         Thread that monitors game time and ends the game after game_duration_seconds.
@@ -289,9 +179,7 @@ class Room:
             # Update best score in the scores file
             if self.game.high_score_all_time.update(nickname, best_score):
                 scores_updated = True
-                logger.info(
-                    f"Updated best score for {nickname}: {best_score}"
-                )
+                logger.info(f"Updated best score for {nickname}: {best_score}")
 
         # Save scores if any were updated
         if scores_updated:
@@ -343,7 +231,6 @@ class Room:
         close_thread = threading.Thread(target=close_room_after_delay)
         close_thread.daemon = True
         close_thread.start()
-    
 
     def is_full(self):
         nb_players = self.get_player_count()
@@ -531,23 +418,133 @@ class Room:
             agents.append(random.choice(self.config.agents))
         agents = agents[:nb_bots_needed]
 
-        used_nicknames = set(self.clients.keys())
         for agent in agents:
-            ai_nickname = agent.nickname
+            ai_nickname = self.get_available_ai_name(agent)
+            ai_agent_file_name = agent.agent_file_name
+            self.add_ai(ai_nickname=ai_nickname, ai_agent_file_name=ai_agent_file_name)
+
+    def get_available_ai_name(self, agent):
+        """Get an available AI name that is not already in use"""
+        ai_nickname = agent.nickname
+
+        if ai_nickname is None or ai_nickname == "":
+            for name in self.AI_NAMES:
+                if name not in self.used_ai_names:
+                    self.used_ai_names.add(name)
+                    return name
+
+            # If all names are used, create a generic name with a random number
+            logger.debug("All AI names are used, creating a generic name")
+            ai_nickname = f"Bot {random.randint(1000, 9999)}"
+            self.used_ai_names.add(ai_nickname)
+
+        # If the nickname is already used, generate a new one
+        while ai_nickname in self.used_nicknames:
+            r = random.randint(1, 999)
+            ai_nickname = f"{ai_nickname}-{r}"
+
+        self.used_nicknames.add(ai_nickname)
+
+        return ai_nickname
+
+    def add_ai(self, ai_nickname=None, ai_agent_file_name=None):
+        """Create an AI client to control a train"""
+
+        # Creating a new AI train (not replacing an existing one)
+        logger.info(f"Creating new AI train with name {ai_nickname}")
+
+        # Add the train to the game
+        if self.game.add_train(ai_nickname):
+            # Add the AI client to the room
+            self.clients[("AI", ai_nickname)] = ai_nickname
+
+            # Import the AI agent from the config path
+            logger.info(
+                f"Creating AI client {ai_nickname} using agent from {ai_agent_file_name}"
+            )
+
+            self.ai_clients[ai_nickname] = AIClient(
+                self, ai_nickname, ai_agent_file_name
+            )
+
+            # Add the ai_client to the game
+            self.game.ai_clients[ai_nickname] = self.ai_clients[ai_nickname]
+
+            logger.info(f"Added new AI train {ai_nickname} to room {self.id}")
+            return ai_nickname
+        else:
+            logger.error(f"Failed to add new AI train {ai_nickname} to game")
+            return None
+
+    def replace_player_by_ai(self, train_nickname_to_replace):
+        # Check if there's already an AI controlling this train
+        if train_nickname_to_replace in self.ai_clients:
+            logger.warning(f"AI already exists for train {train_nickname_to_replace}")
+            return
+
+        logger.info(f"Creating AI client for train {train_nickname_to_replace}")
+
+        # Change the train's name in the game
+        if train_nickname_to_replace in self.game.trains:
+            # Get a random agent from config
+            agent = random.choice(self.config.agents)
+            ai_nickname = self.get_available_ai_name(agent)
             ai_agent_file_name = agent.agent_file_name
 
-            if ai_nickname is None or ai_nickname == "":
-                ai_nickname = self.get_available_ai_name()
-                logger.debug(f"Using base_agent for AI {ai_nickname} as no agent nickname was provided")
+            # Save the train's color
+            if train_nickname_to_replace in self.game.train_colors:
+                train_color = self.game.train_colors[train_nickname_to_replace]
+                self.game.train_colors[ai_nickname] = train_color
+                del self.game.train_colors[train_nickname_to_replace]
 
-            # If the nickname is already used, generate a new one
-            while ai_nickname in used_nicknames:
-                r = random.randint(1, 999)
-                ai_nickname = f"{ai_nickname}-{r}"
+            # Get the train object
+            train = self.game.trains[train_nickname_to_replace]
 
-            used_nicknames.add(ai_nickname)
-            self.create_ai_for_train(
-                ai_nickname=ai_nickname, ai_agent_file_name=ai_agent_file_name
+            # Update the train's name
+            train.nickname = ai_nickname
+
+            # Move the train to the new key in the dictionary
+            self.game.trains[ai_nickname] = train
+            del self.game.trains[train_nickname_to_replace]
+            logger.debug(
+                f"Moved train {train_nickname_to_replace} to {ai_nickname} in game"
+            )
+
+            # Notify clients about the train rename
+            state_data = {
+                "type": "state",
+                "data": {"rename_train": [train_nickname_to_replace, ai_nickname]},
+            }
+
+            state_json = json.dumps(state_data) + "\n"
+            # Iterate over a copy of the client addresses to avoid issues if the list changes
+            # Only send to non-AI clients
+            for client_addr in list(self.clients.keys()):
+                # Ensure it's a real client address tuple (IP, port), not an AI marker
+                if (
+                    isinstance(client_addr, tuple)
+                    and len(client_addr) == 2
+                    and isinstance(client_addr[1], int)
+                ):
+                    try:
+                        self.server_socket.sendto(state_json.encode(), client_addr)
+                    except Exception as e:
+                        # Log error but continue trying other clients
+                        logger.error(
+                            f"Error sending train rename notification to client {client_addr}: {e}"
+                        )
+
+            # Create the AI client with the new name
+            self.ai_clients[ai_nickname] = AIClient(
+                self, ai_nickname, ai_agent_file_name
+            )
+
+            # Add the AI client to the game
+            self.game.ai_clients[ai_nickname] = self.ai_clients[ai_nickname]
+
+        else:
+            logger.warning(
+                f"Train {train_nickname_to_replace} not found in game, cannot create AI client"
             )
 
     def add_all_trains(self):
