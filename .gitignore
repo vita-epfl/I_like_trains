@@ -7,4 +7,6 @@ player_scores.json
 
 config.json
 common/agents/staff_*
+common/agents/agent.py
+
 simulate_clients.ps1

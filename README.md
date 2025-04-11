@@ -57,7 +57,24 @@ want to adjust the config file if you want to connect to the lab's server
 or run multiple agents. You will also need to adjust the config if you
 want to play with the keyboard against your agent.
 
-### 4. (Optional) Start a local server for testing
+### 4. Setup your agent file
+
+Copy `common/agents/agent.py.template` to `common/agents/agent.py`. You can use your graphical interface or one of the following commands:
+
+```bash
+# Linux/MacOS/Unix
+cp common/agents/agent.py.template common/agents/agent.py
+
+# Windows (Command Prompt)
+copy common\agents\agent.py.template common\agents\agent.py
+
+# Windows (PowerShell)
+Copy-Item -Path common\agents\agent.py.template -Destination common\agents\agent.py
+```
+
+This will create your agent file that you'll modify to implement your train's behavior. Make sure to update the SCIPERS list in the file with your actual SCIPER numbers.
+
+### 5. (Optional) Start a local server for testing
 
 You can start a local server by running `python -m server` if you want to test the client locally. This will start a server on `0.0.0.0:5555` (the host set in the configuration file).
 Then, open another terminal, go to the project folder, and run `python -m client config.json` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
@@ -67,7 +84,7 @@ This allows:
 - Other players to connect to your game if you share your IP address with them
 - This is useful for organizing your own competitions or testing with friends
 
-### 5. Select a Game Mode
+### 6. Select a Game Mode
 
 The game supports three different modes that can be set in the `config.json` file:
 
@@ -89,7 +106,7 @@ How the modes affect the client and server:
 
 Modify the game mode in "client" according to the mode you want to use.
 
-### 6. Set up the agents for agent/manual and observer modes
+### 7. Set up the agents for agent/manual and observer modes
 
 In the `config.json` file, you can find the configuration for the agent/manual and observer modes.
 Set up the game mode you want to play, your sciper, a train name, and the name of the agent file. This agent file will be used to compete against the other agents in the agent/manual modes.
@@ -124,7 +141,7 @@ Example configuration in `config.json`:
 }
 ```
 
-### 7. Run the client
+### 8. Run the client
 
 If you are connecting to a remote server, you need to know the IP address and port of the server. If you are outside of EPFL network, you will need to use a VPN to connect to the network.
 
