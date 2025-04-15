@@ -1,7 +1,7 @@
 import random
 from base_agent import BaseAgent
 from network import NetworkManager # type: ignore
-
+from common.move import Move
 
 BASE_DIRECTIONS = [
     (0, -1),  # Up
@@ -51,7 +51,11 @@ class Agent(BaseAgent):
         and returns 2 directions (among up, down, left or right) corresponding to the moves the
         train has to do in the future to reach it.'''
         
-
+        #toutes les infos sur notre train
+        train = self.all_trains[self.nickname]
+        
+        
+        
         # We rename the variables we'll call in the method to simplify the syntax
         # TODO Trouver les path de chacune des variables ci-dessous
         # /!\ Les loc doivent être données tq 1 case == 1 valeur (diviser nbr pixels par la taille des cellules)
@@ -63,10 +67,10 @@ class Agent(BaseAgent):
         passen2_loc = ...
         passen2_value = ...
         # Our own attributes
-        self.cur_dir = ... # Must be precisely "up", "down", "left" or "right"
+        self.cur_dir = Move(tuple(train["direction"])) # Must be precisely "up", "down", "left" or "right"
         our_len = ...
         self.our_loc = ...
-        self.our_head = ...
+        self.our_head = tuple(train["position"])
         # Calculus of the distances ("d")
         d_passen1 = ...
         d_passen2 = ...
