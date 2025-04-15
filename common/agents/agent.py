@@ -103,7 +103,7 @@ class Agent(BaseAgent):
         '''This method is used to change / chose among the directions given by main_path
         if there is a "danger" on the way. It will have the "last word" to decide which
         way to go. Convert the "directions"-2-elements tuple (among "up", "down", "right",
-        "left" and / or None) into a string (among same directions)'''
+        "left" and / or None) into the command of the chosen move.'''
 
         '''TODO: (dans l'ordre de "priorité" de la méthode)
 
@@ -141,12 +141,16 @@ class Agent(BaseAgent):
                 else:
                     directions = ("up","down")
 
+        # Final - return part (if no return before)
+        transition_dict = {"up":Move.UP, "down":Move.DOWN, "right":Move.RIGHT, "left":Move.LEFT}
+        return transition_dict[directions[0]]
+
 
     def get_move(self):
         """
         This method is regularly called by the client to get the next direction of the train.
         """
-        self.main_path()
+        final_choice = self.adapt_path(self.main_path()) # Ne retourne rien pour l'instant
         moves = [Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT]
         return self.cur_dir.turn_right()
         #return random.choice(BASE_DIRECTIONS) # Replace this with your own logic
