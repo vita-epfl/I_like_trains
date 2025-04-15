@@ -63,7 +63,7 @@ class Agent(BaseAgent):
         passen2_loc = ...
         passen2_value = ...
         # Our own attributes
-        self.cur_dir = ...
+        self.cur_dir = ... # Must be precisely "up", "down", "left" or "right"
         our_len = ...
         self.our_loc = ...
         self.our_head = ...
@@ -126,9 +126,8 @@ class Agent(BaseAgent):
                 return ("",None)
             else:                 # self.our_head[1] - self.target[1] > 0
                 return ("",None)
-            
-        '''On ne peut pas avoir 2 None: le code doit etre construit de sorte à ce que lorsqu'on a
-        atteint target, ce dernier s'actualise, et vise un autre point.'''
+        # On ne peut pas avoir 2 None: le code doit etre construit de sorte à ce que lorsqu'on a
+        # atteint target, ce dernier s'actualise, et vise un autre point.'''        
 
         # FIN DE MAIN_PATH
 
@@ -140,6 +139,9 @@ class Agent(BaseAgent):
         "left" and / or None (in case the target is in a "straight" direction).'''
 
         '''TODO: (dans l'ordre de "priorité" de la méthode)
+
+        - Déterminer parmis les deux directions données, si il y en a une "prioritaire" (e.t. si une
+        des directions données est derrière (voire derrière nous), et donc inateignable en 1 action)
 
         - Danger imminent: choisir si possible la 2eme direction, sinon une autre direction
         (qui n'est donc pas mentionnée dans "directions");
