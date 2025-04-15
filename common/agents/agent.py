@@ -135,32 +135,48 @@ class Agent(BaseAgent):
     def adapt_path(self, directions): 
         '''This method is used to change / chose among the directions given by main_path
         if there is a "danger" on the way. It will have the "last word" to decide which
-        way to go. The input "directions" is a 2-elements tuple among "up", "down", "right",
-        "left" and / or None (in case the target is in a "straight" direction).'''
+        way to go. Convert the "directions"-2-elements tuple (among "up", "down", "right",
+        "left" and / or None) into a string (among same directions)'''
 
         '''TODO: (dans l'ordre de "priorité" de la méthode)
 
-        - Déterminer parmis les deux directions données, si il y en a une "prioritaire" (e.t. si une
-        des directions données est derrière (voire derrière nous), et donc inateignable en 1 action)
+        - 1: Déterminer parmis les deux directions données, si il y en a une "prioritaire" (e.t. si une
+        des directions (ou LA direction) donné.e.s est derrière nous, et donc inateignable en 1 action)
 
-        - Danger imminent: choisir si possible la 2eme direction, sinon une autre direction
+        - 2: Danger imminent: choisir si possible la 2eme direction, sinon une autre direction
         (qui n'est donc pas mentionnée dans "directions");
         /!\ Cette partie est nécessaire mais pas suffisante: si elle s'active (et élimine une
         direction dangereuse dans l'immédiat), mais qu'il reste à choisir entre la "deuxième direction"
         et la direction la "moins bonne", il est tout de même important de tester la suite avant de
         prendre une décision.
 
-        - Danger potentiel: Trouver des "situations dangereuses", et la logique du
+        - 3: Danger potentiel: Trouver des "situations dangereuses", et la logique du
         code pour les identifier et les éviter;
 
         (Optionnel:)
-        - Pas de danger: En cas de nullité des 2 premiers cas, trouver un "paterne idéal"
-        (e.d. la suite de mouvement la plus "safe" possible) -> Idée: essayer le plus possible
-        de passer vers le centre du terrain, d'où tous les points sont atteignable rapidement'''
+        - 4: Pas de danger: En cas de nullité des 3 premiers cas, trouver un "paterne idéal"
+        (e.d. la suite de mouvement la plus "safe" et "optimisée" possible) -> Idée: essayer le plus
+        possible de passer vers le centre du terrain, d'où tous les points sont atteignable rapidement'''
+
+
+        # Partie 1: Direction prioritaire (pas de return ici) 
+        if self.cur_dir not in directions: # if "yes", we just skip part 1
+            opposite_dir = {"up":"down","right":"left","down":"up","left":"right"}
+            if directions[1]: # Autrement dit != None
+                if directions[0] == opposite_dir[self.cur_dir]:
+                    temp = directions[0]
+                    directions = (directions[1], temp)
+                # Sinon ne rien faire: la direction prioritaire est déjà la première
+
+            else: # The only direction given needs to go back
+                if self.cur_dir == "up" or self.cur_dir == "down":
+                    directions = ("right","left")
+                else:
+                    directions = ("up","down")
 
 
     def get_direction(self):
         """
         This method is regularly called by the client to get the next direction of the train.
         """
-        return random.choice(BASE_DIRECTIONS) # Replace this with your own logic
+        
