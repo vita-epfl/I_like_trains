@@ -30,8 +30,7 @@ class Agent(BaseAgent):
         passen2_value = ...
         # Our own attributes
         self.cur_dir = Move(tuple(train["direction"])) # Must be precisely "up", "down", "left" or "right"
-        pass
-        our_len = ...
+        our_len = int(len(train["wagons"]))
         self.our_loc = ...
         self.our_head = tuple(train["position"])
         # Calculus of the distances ("d")
