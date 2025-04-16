@@ -179,5 +179,5 @@ class Agent(BaseAgent):
         
         
         moves = [Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT]
-        return Move.turn_left(self.cur_dir)
+        return random.choice(moves)
         
