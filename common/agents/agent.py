@@ -13,27 +13,57 @@ class Agent(BaseAgent):
         and returns 2 directions (among up, down, left or right) corresponding to the moves the
         train has to do in the future to reach it.'''
         
-        #toutes les infos sur notre train
-        train = self.all_trains[self.nickname]
+        """toutes les infos sur notre train, import"""
+        self.train = self.all_trains[self.nickname]
+        """toutes infos sur l'autre train, import"""
+        self.autre = self.all_trains["Agent1"]
         
+        #info sur les passagers
+        passagers = self.passengers
         
         
         # We rename the variables we'll call in the method to simplify the syntax
         # TODO Trouver les path de chacune des variables ci-dessous
         # /!\ Les loc doivent être données tq 1 case == 1 valeur (diviser nbr pixels par la taille des cellules)
+        """ infos sur l'autre"""
+        self.opp_cur_dir = Move(tuple(self.autre["direction"])) # Must be precisely "up", "down", "left" or "right"
+        self.opp_len = int(len(self.autre["wagons"]))
         self.opponent_loc = ...
-        self.opponent_head = ...
-        zone_loc = ...
-        passen1_loc = ...
-        passen1_value = ...
-        passen2_loc = ...
-        passen2_value = ...
-        # Our own attributes
-        self.cur_dir = Move(tuple(train["direction"])) # Must be precisely "up", "down", "left" or "right"
-        our_len = int(len(train["wagons"]))
+        self.opponent_head = tuple(self.autre["position"])
+        """ info sur delivery zone"""    
+        zone_loc = [tuple(self.delivery_zone["position"])]
+        znch = self.delivery_zone["height"]//20 #zone_nb_case_haut, combien de cases de haut fait la zone
+        zncl = self.delivery_zone["width"]//20 #zone_nb_case_large, idem de large
+        
+        match znch :
+            case 1:
+                match zncl:
+                    case 1:
+                        print()
+                    case _:
+                        for x in range(1,zncl):
+                            zone_loc.append((zone_loc[0][0]+x*20,zone_loc[0][1]))
+            case _:
+                match zncl:
+                    case 1:
+                        for y in range(1,znch):
+                            zone_loc.append((zone_loc[0][0],zone_loc[0][1]+y*20))
+                    case _:
+                        for y in range(1,znch):
+                            for x in range(1,zncl):
+                                zone_loc.append((zone_loc[0][0] + x*20,zone_loc[0][1] + y*20)) # à voir si le dernier cas suffit pas, histoire de faire propre
+        zone_loc_set = set(zone_loc)        
+        """ info sur passagers"""
+        passen1_loc = passagers[0]["position"]
+        passen1_value = passagers[0]["value"]
+        passen2_loc = passagers[1]["position"]
+        passen2_value = passagers[1]["value"]
+        """ Our own attributes"""
+        self.cur_dir = Move(tuple(self.train["direction"])) # Must be precisely "up", "down", "left" or "right"
+        our_len = int(len(self.train["wagons"]))
         self.our_loc = ...
-        self.our_head = tuple(train["position"])
-        # Calculus of the distances ("d")
+        self.our_head = tuple(self.train["position"])
+        """# Calculus of the distances ("d")"""
         d_passen1 = ...
         d_passen2 = ...
         d_oppo_passen1 = ...
@@ -146,6 +176,8 @@ class Agent(BaseAgent):
         This method is regularly called by the client to get the next direction of the train.
         """
         self.main_path()
+        
+        
         moves = [Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT]
-        return self.cur_dir.turn_right()
-        #return random.choice(BASE_DIRECTIONS) # Replace this with your own logic
+        return Move.turn_left(self.cur_dir)
+        
