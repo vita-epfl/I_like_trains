@@ -21,6 +21,7 @@ class Agent(BaseAgent):
         # We rename the variables we'll call in the method to simplify the syntax
         # TODO Trouver les path de chacune des variables ci-dessous
         # /!\ Les loc doivent être données tq 1 case == 1 valeur (diviser nbr pixels par la taille des cellules)
+        # /!\ Apparemment, l'origine est placée bizarrement
         self.opponent_loc = ...
         self.opponent_head = ...
         zone_loc = ...
@@ -30,7 +31,6 @@ class Agent(BaseAgent):
         passen2_value = ...
         # Our own attributes
         self.cur_dir = Move(tuple(train["direction"])) # Must be precisely "up", "down", "left" or "right"
-        pass
         our_len = ...
         self.our_loc = ...
         self.our_head = tuple(train["position"])
@@ -108,7 +108,8 @@ class Agent(BaseAgent):
         '''TODO: (dans l'ordre de "priorité" de la méthode)
 
         - 1: Déterminer parmis les deux directions données, si il y en a une "prioritaire" (e.t. si une
-        des directions (ou LA direction) donné.e.s est derrière nous, et donc inateignable en 1 action)
+        des directions (ou LA direction) donné.e.s est derrière nous, et donc inateignable en 1 action) ET
+        déterminer la (les) direction(s) de secour(s) (au cas où les directions souhaitées seraient dangereuses).
 
         - 2: Danger imminent: choisir si possible la 2eme direction, sinon une autre direction
         (qui n'est donc pas mentionnée dans "directions");
@@ -125,25 +126,59 @@ class Agent(BaseAgent):
         (e.d. la suite de mouvement la plus "safe" et "optimisée" possible) -> Idée: essayer le plus
         possible de passer vers le centre du terrain, d'où tous les points sont atteignable rapidement'''
 
+        # Dictionaries to convert the directions-string into something else
+        dict_str_to_command = {"up":Move.UP, "down":Move.DOWN, "right":Move.RIGHT, "left":Move.LEFT}
+        dict_str_to_values = {"up":(0,-1), "down":(0,1), "right":(1,0), "left":(-1,0)}
+        dict_opposite_dir = {"up":"down","right":"left","down":"up","left":"right"}
 
-        # Partie 1: Direction prioritaire (pas de return ici) 
-        if self.cur_dir not in directions: # if "yes", we just skip part 1
-            opposite_dir = {"up":"down","right":"left","down":"up","left":"right"}
+        # Partie 1: Direction prioritaire + Déterminer (pas de return ici) 
+        if self.cur_dir not in directions:
             if directions[1]: # Autrement dit != None
-                if directions[0] == opposite_dir[self.cur_dir]:
-                    temp = directions[0]
-                    directions = (directions[1], temp)
-                # Sinon ne rien faire: la direction prioritaire est déjà la première
-
+                if directions[0] == dict_opposite_dir[self.cur_dir]:
+                    other_directions = (self.cur_dir, dict_opposite_dir[directions[1]]) # Les deux autres directions possibles
+                    directions = (directions[1], None)
+                else: # directions[1] == dict_opposite_dir[self.cur_dir]
+                    other_directions = (self.cur_dir, dict_opposite_dir[directions[0]])
+                    directions = (directions[0], None)
             else: # The only direction given needs to go back
+                other_directions = (self.cur_dir, None)
                 if self.cur_dir == "up" or self.cur_dir == "down":
                     directions = ("right","left")
                 else:
                     directions = ("up","down")
+        else: # We just update (create) "other_directions", with the opposite direction of the non-current direction
+            if self.cur_dir == directions[0]:
+                other_directions = (dict_opposite_dir[directions[1]], None)
+            else: # self.cur_dir == directions[1]
+                other_directions = (dict_opposite_dir[directions[0]], None)
+
+
+        # Partie 2: Danger imminent (pas de return: check "danger potentiel" avant?)
+        # TODO: Find a way to check if "out-limits", and if we re "rushing toward" the opponent
+        # We have to check both directions, starting by the first given by the variable "directions"
+            # The priority direction:            
+            for i in range(2): # First, let's check directions
+                if not directions[i]: # == None
+                    continue
+                next_loc = (self.our_head[0] + dict_str_to_values[directions[i]][0], self.our_head[1] + dict_str_to_values[directions[i]][1])
+                if next_loc in self.opponent_loc or next_loc in self.our_loc:
+                    directions[i] = None
+                    # Then we want the other priority direction, or if it doesn't exist, one of other_directions
+            for j in range(2): # Now, let's check other_directions
+                if not other_directions[i]: # == None
+                    continue
+                next_loc = (self.our_head[0] + dict_str_to_values[other_directions[j]][0], self.our_head[1] + dict_str_to_values[other_directions[j]][1])
+                if next_loc in self.opponent_loc or next_loc in self.our_loc:
+                    other_directions[i] = None
+                    # Then we want the other priority direction, or if it doesn't exist, one of other_directions
+
+
+
+            
 
         # Final - return part (if no return before)
-        transition_dict = {"up":Move.UP, "down":Move.DOWN, "right":Move.RIGHT, "left":Move.LEFT}
-        return transition_dict[directions[0]]
+        
+        return dict_str_to_command[directions[0]]
 
 
     def get_move(self):
