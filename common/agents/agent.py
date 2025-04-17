@@ -231,4 +231,4 @@ class Agent(BaseAgent):
         #final_choice = self.adapt_path(self.main_path()) # Ne retourne rien pour l'instant
         moves = [Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT]
         #return self.cur_dir.turn_right()
-        return random.choice(moves) 
+        return random.choice(moves)  
