@@ -132,52 +132,103 @@ class Agent(BaseAgent):
         '''This method is used to change / chose among the directions given by main_path
         if there is a "danger" on the way. It will have the "last word" to decide which
         way to go. Convert the "directions"-2-elements tuple (among "up", "down", "right",
-        "left" and / or None) into a string (among same directions)'''
+        "left" and / or None) into the command of the chosen move.'''
 
         '''TODO: (dans l'ordre de "priorité" de la méthode)
 
-        - 1: Déterminer parmis les deux directions données, si il y en a une "prioritaire" (e.t. si une
-        des directions (ou LA direction) donné.e.s est derrière nous, et donc inateignable en 1 action)
+        - 1 (FAIT): Déterminer parmis les deux directions données, si il y en a une "prioritaire" (e.t. si une
+        des directions (ou LA direction) donné.e.s est derrière nous, et donc inateignable en 1 action) ET
+        déterminer la (les) direction(s) de secour(s) (au cas où les directions souhaitées seraient dangereuses).
 
-        - 2: Danger imminent: choisir si possible la 2eme direction, sinon une autre direction
-        (qui n'est donc pas mentionnée dans "directions");
+        - 2 (A COMPLETER): Danger imminent: Evaluer le danger de chacune des direction possible ("directions"
+        ET "other_directions") et remplacer par "None" celles qui sont dangereuses.
         /!\ Cette partie est nécessaire mais pas suffisante: si elle s'active (et élimine une
-        direction dangereuse dans l'immédiat), mais qu'il reste à choisir entre la "deuxième direction"
-        et la direction la "moins bonne", il est tout de même important de tester la suite avant de
-        prendre une décision.
+        direction dangereuse dans l'immédiat), mais qu'il reste à choisir entre deux directions (même
+        si il y en a une prioritaire), il est tout de même important de tester la suite avant de
+        prendre une décision;
 
         - 3: Danger potentiel: Trouver des "situations dangereuses", et la logique du
         code pour les identifier et les éviter;
 
-        (Optionnel:)
+        Très (très) Optionnel:
         - 4: Pas de danger: En cas de nullité des 3 premiers cas, trouver un "paterne idéal"
         (e.d. la suite de mouvement la plus "safe" et "optimisée" possible) -> Idée: essayer le plus
         possible de passer vers le centre du terrain, d'où tous les points sont atteignable rapidement'''
 
+        # Dictionaries to convert the directions-string into something else
+        dict_str_to_command = {"up":Move.UP, "down":Move.DOWN, "right":Move.RIGHT, "left":Move.LEFT}
+        dict_str_to_values = {"up":(0,-1), "down":(0,1), "right":(1,0), "left":(-1,0)}
+        dict_opposite_dir = {"up":"down","right":"left","down":"up","left":"right"}
 
-        # Partie 1: Direction prioritaire (pas de return ici) 
-        if self.cur_dir not in directions: # if "yes", we just skip part 1
-            opposite_dir = {"up":"down","right":"left","down":"up","left":"right"}
-            if directions[1]: # Autrement dit != None
-                if directions[0] == opposite_dir[self.cur_dir]:
-                    temp = directions[0]
-                    directions = (directions[1], temp)
-                # Sinon ne rien faire: la direction prioritaire est déjà la première
 
-            else: # The only direction given needs to go back
+        # Partie 1: Direction prioritaire + Déterminer les "autres directions", soient les directions "possibles"
+        # mais pas prioritaires (pas de return ici) 
+        if self.cur_dir not in directions: # Means there can be only one of the "good" directions we can go
+            
+            if directions[1]: # != None, means the target is on a diagonal (two directions "wanted")
+                if directions[0] == dict_opposite_dir[self.cur_dir]:
+                    other_directions = (self.cur_dir, dict_opposite_dir[directions[1]]) # Les deux autres directions possibles
+                    directions = (directions[1], None)
+                else: # directions[1] == dict_opposite_dir[self.cur_dir]
+                    other_directions = (self.cur_dir, dict_opposite_dir[directions[0]])
+                    directions = (directions[0], None)
+            
+            else: # Two possibilities: the target is next to us, or behind us (both on "strait line")
+                if self.cur_dir == dict_opposite_dir(directions[0]): # It's behind us: we have to go back
+                    other_directions = (self.cur_dir, None)
+                    if self.cur_dir == "up" or self.cur_dir == "down":
+                        directions = ("right","left")
+                    else:
+                        directions = ("up","down")
+                else: # We don't change the tuple "directions", as we can go there: just have to change "other_directions"
+                    other_directions = (self.cur_dir, dict_opposite_dir(directions[0]))
+        
+        else: # Means that we can go in (both) direction(s) and that we are already going the right way
+            if directions[1]: # Target on diagonal
+                if self.cur_dir == directions[0]:
+                    other_directions = (dict_opposite_dir[directions[1]], None)
+                else: # self.cur_dir == directions[1]
+                    other_directions = (dict_opposite_dir[directions[0]], None)
+            else: # If target is not on a diagonal, it means we're rushing toward it
                 if self.cur_dir == "up" or self.cur_dir == "down":
-                    directions = ("right","left")
+                    other_directions = ("right","left")
                 else:
-                    directions = ("up","down")
+                    other_directions = ("up","down")
+
+
+        # Partie 2: Danger imminent (pas de return: check "danger potentiel" avant?)
+        # TODO: Find a way to check if "out-limits", and if we re "rushing toward" the opponent
+        # We have to check both directions, starting by the first given by the variable "directions"
+            # The priority direction:            
+            for i in range(2): # First, let's check directions
+                if not directions[i]: # == None
+                    continue
+                next_loc = (self.our_head[0] + dict_str_to_values[directions[i]][0], self.our_head[1] + dict_str_to_values[directions[i]][1])
+                if next_loc in self.opponent_loc or next_loc in self.our_loc:
+                    directions[i] = None
+                    # Then we want the other priority direction, or if it doesn't exist, one of other_directions
+            for j in range(2): # Now, let's check other_directions
+                if not other_directions[i]: # == None
+                    continue
+                next_loc = (self.our_head[0] + dict_str_to_values[other_directions[j]][0], self.our_head[1] + dict_str_to_values[other_directions[j]][1])
+                if next_loc in self.opponent_loc or next_loc in self.our_loc:
+                    other_directions[i] = None
+                    # Then we want the other priority direction, or if it doesn't exist, one of other_directions
+
+            
+        '''Provisoire: ce return est suceptible d'être supprimé, car compris dans la partie 3.'''
+        # Final - return part (if no return before)
+        if directions[0]: # != None: means there is still a priority direction available
+            return dict_str_to_command[directions[0]]
+        else: # Emergency: we have to escape in another direction
+            return dict_str_to_command[other_directions[0]]
 
 
     def get_move(self):
         """
         This method is regularly called by the client to get the next direction of the train.
         """
-        self.main_path()
-        
-        
+        final_choice = self.adapt_path(self.main_path()) # Ne retourne rien pour l'instant
         moves = [Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT]
-        return random.choice(moves)
-        
+        return self.cur_dir.turn_right()
+        #return random.choice(BASE_DIRECTIONS) # Replace this with your own logic
