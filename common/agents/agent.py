@@ -228,7 +228,7 @@ class Agent(BaseAgent):
         """
         This method is regularly called by the client to get the next direction of the train.
         """
-        final_choice = self.adapt_path(self.main_path()) # Ne retourne rien pour l'instant
+        #final_choice = self.adapt_path(self.main_path()) # Ne retourne rien pour l'instant
         moves = [Move.UP, Move.DOWN, Move.LEFT, Move.RIGHT]
         #return self.cur_dir.turn_right()
         return random.choice(moves) 
