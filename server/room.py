@@ -7,6 +7,7 @@ import time
 from common.server_config import ServerConfig
 from server.game import Game
 from server.ai_client import AIClient
+from common import stats_manager
 
 # Configure logger
 logger = logging.getLogger("server.room")
@@ -47,15 +48,18 @@ class Room:
         server_socket,
         send_cooldown_notification,
         remove_room,
+        addr_to_sciper,
+        record_disconnection,
     ):
         self.config = config
         self.id = room_id
         self.nb_players_max = nb_players_max
+        self.running = running
         self.server_socket = server_socket
         self.send_cooldown_notification = send_cooldown_notification
         self.remove_room = remove_room
-
-        self.running = running
+        self.addr_to_sciper = addr_to_sciper
+        self.record_disconnection = record_disconnection
 
         self.clients = {}  # {addr: nickname}
         self.client_game_modes = {}  # {addr: game_mode}
@@ -100,7 +104,12 @@ class Room:
         # self.waiting_room_thread.join() # Cannot join from the same thread
 
         if not self.game_thread:
-            self.game = Game(self.config, self.send_cooldown_notification, self.nb_players_max, self.id)
+            self.game = Game(
+                self.config,
+                self.send_cooldown_notification,
+                self.nb_players_max,
+                self.id,
+            )
 
             self.fill_with_bots()
             self.add_all_trains()
@@ -162,6 +171,10 @@ class Room:
         final_scores = []
         scores_updated = False
 
+        # log the best scores
+        logger.debug(f"Best scores: {self.game.best_scores}")
+
+        participant_scores = []  # List of tuples: (id, score, is_human)
         for nickname, best_score in self.game.best_scores.items():
             logger.debug(f"Train {nickname} has best score {best_score}")
 
@@ -175,16 +188,155 @@ class Room:
             final_scores.append({"name": nickname, "best_score": best_score})
 
             # Update best score in the scores file
-            if self.game.high_score_all_time.update(nickname, best_score):
-                scores_updated = True
-                logger.info(f"Updated best score for {nickname}: {best_score}")
+            # if self.game.high_score_all_time.update(nickname, best_score):
+            #     scores_updated = True
+            #     logger.info(f"Updated best score for {nickname}: {best_score}")
+
+            participant_id = None
+            is_human = False
+            # Check if it's a human player
+            found_human = False
+            for addr, name in self.clients.items():
+                if name == nickname:
+                    sciper = self.addr_to_sciper.get(addr)
+                    if sciper:
+                        participant_id = sciper
+                        is_human = True
+                        found_human = True
+                        break
+            # If not found as human, assume it's an AI
+            if not found_human:
+                participant_id = nickname  # Use name as ID for bots
+                is_human = False
+
+            if participant_id:
+                participant_scores.append((participant_id, best_score, is_human))
+
+        # --- Record Bot vs Human Scores ---
+        human_players = [(p_id, score) for p_id, score, is_human in participant_scores if is_human]
+        bot_players = [(p_id, score) for p_id, score, is_human in participant_scores if not is_human]
+
+        if human_players and bot_players:
+            logger.debug(f"Recording bot vs human scores for room {self.id}")
+            for human_id, human_score in human_players:
+                for bot_id, bot_score in bot_players:
+                    logger.debug(f"  Recording: Human {human_id} ({human_score}) vs Bot {bot_id} ({bot_score})")
+                    stats_manager.record_bot_vs_human_score(human_id, bot_id, human_score, bot_score)
+        # -----------------------------------
+
+        # --- Stats: Record Game Results ---
+        if final_scores:
+            logger.debug(f"Recording game results for final scores: {final_scores}")
+            winner_nickname = final_scores[0]["name"]
+
+            # We only need the winner's nickname and whether they are AI for context
+            winner_is_ai = winner_nickname in self.ai_clients
+
+            for i, score_entry in enumerate(final_scores):
+                logger.debug(f"Processing score entry {i}: {score_entry}")
+                nickname = score_entry["name"]
+                addr = next((a for a, n in self.clients.items() if n == nickname), None)
+                is_ai = nickname in self.ai_clients
+
+                # --- Skip AI players for stat recording ---
+                if is_ai:
+                    logger.debug(f"Skipping stats for AI player {nickname}")
+                    continue  # Only record stats for human players
+
+                # --- Get Human Player Info ---
+                if not addr:  # Should only happen if human client disconnected *during* end_game processing?
+                    logger.warning(
+                        f"Stats: Could not find address for player {nickname} in room {self.id}. Skipping stats."
+                    )
+                    continue
+
+                # Get sciper from the server instance using the address
+                player_sciper = self.addr_to_sciper.get(addr)
+                logger.debug(
+                    f"Stats: Found sciper {player_sciper} for human player {nickname} ({addr})"
+                )
+
+                if not player_sciper:
+                    logger.warning(
+                        f"Stats: Could not find sciper for human player {nickname} ({addr}). Skipping stats."
+                    )
+                    continue
+
+                # --- Determine Opponent Context ---
+                is_winner = nickname == winner_nickname
+                opponent_nickname = "N/A"
+                opponent_is_bot = False
+
+                logger.debug(
+                    f"Stats: Determining opponent context for {nickname} - is winner: {is_winner}"
+                )
+
+                if is_winner:
+                    logger.debug(
+                        f"Human player {nickname} is a winner - finding opponent"
+                    )
+                    # Winner: Find highest scoring opponent for context (can be human or AI)
+                    if len(final_scores) > 1:
+                        logger.debug(
+                            f"Multiple human players in room {self.id} - finding highest scoring opponent"
+                        )
+                        opponent_score_entry = final_scores[1]
+                        opponent_nickname = opponent_score_entry["name"]
+                        opponent_is_bot = opponent_nickname in self.ai_clients
+                    else:
+                        logger.debug(
+                            f"Only one human player in room {self.id} - no opponent"
+                        )
+                        opponent_nickname = "No Opponent"
+                        opponent_is_bot = False  # No opponent
+                else:
+                    logger.debug(
+                        f"Human player {nickname} is a loser - opponent is {winner_nickname}"
+                    )
+                    # Loser: Opponent context is the winner
+                    opponent_nickname = winner_nickname
+                    opponent_is_bot = winner_is_ai
+
+                # --- Record Stats ---
+                try:
+                    logger.debug(
+                        f"Recording game result for sciper {player_sciper} - win: {is_winner}, opponent: {opponent_nickname}, opponent is bot: {opponent_is_bot}"
+                    )
+                    stats_manager.record_game_result(
+                        sciper=player_sciper,
+                        win=is_winner,
+                        opponent_is_bot=opponent_is_bot,
+                        opponent_name=opponent_nickname,
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Stats: Failed to record game result for {player_sciper}: {e}"
+                    )
+
+        # === Record last match scores for all pairs ===
+        logger.debug(
+            f"Recording last match scores for all pairs. Participants: {participant_scores}"
+        )
+        if len(participant_scores) >= 2:
+            for i in range(len(participant_scores)):
+                for j in range(i + 1, len(participant_scores)):
+                    id1, score1, is_human1 = participant_scores[i]
+                    id2, score2, is_human2 = participant_scores[j]
+
+                    # Call record_bot_vs_human_score ONLY for human vs bot pairs
+                    if is_human1 and not is_human2:
+                        stats_manager.record_bot_vs_human_score(
+                            human_sciper=id1, bot_nickname=id2, human_score=score1, bot_score=score2
+                        )
+                    elif not is_human1 and is_human2:
+                        stats_manager.record_bot_vs_human_score(
+                            human_sciper=id2, bot_nickname=id1, human_score=score2, bot_score=score1
+                        )
+                    # No call for human-human or bot-bot pairs as last_match_scores was removed
 
         # Save scores if any were updated
-        if scores_updated:
-            self.game.high_score_all_time.save()
-
-        # Sort scores in descending order
-        final_scores.sort(key=lambda x: x["best_score"], reverse=True)
+        # if scores_updated:
+        #     self.game.high_score_all_time.save()
 
         # Create game over message
         game_over_data = {
@@ -193,7 +345,7 @@ class Room:
                 "message": "Game is over. Time limit reached.",
                 "final_scores": final_scores,
                 "duration": self.config.game_duration_seconds,
-                "best_scores": self.game.high_score_all_time.get(),
+                "best_scores": self.game.best_scores,
             },
         }
 
@@ -214,6 +366,20 @@ class Room:
                 logger.error(f"Error sending game over data to client: {e}")
 
         self.game.running = False
+
+        # Record disconnection stats for all human clients at game end
+        # This ensures playtime is recorded even if clients disconnect without proper notification
+        for addr in list(self.clients.keys()):
+            # Skip AI clients
+            if isinstance(addr, tuple) and len(addr) == 2 and addr[0] == "AI":
+                continue
+                
+            # Call handle_client_disconnection for human clients
+            try:
+                logger.info(f"Recording end-of-game stats for client at {addr}")
+                self.record_disconnection(self.addr_to_sciper[addr], "game_over")
+            except Exception as e:
+                logger.error(f"Error recording end-of-game stats for {addr}: {e}")
 
         # Close the room after a short delay to ensure all clients receive the game over message
         def close_room_after_delay():

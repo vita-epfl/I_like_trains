@@ -184,7 +184,7 @@ class AIClient:
                             not self.room.game_thread
                             or not self.room.game_thread.is_alive()
                         ):
-                            if self.room.get_player_count() >= self.room.nb_players:
+                            if self.room.get_player_count() >= self.room.nb_players_max:
                                 self.room.start_game()
 
                     logger.debug(f"AI client {self.nickname} trying to spawn")

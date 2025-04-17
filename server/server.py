@@ -6,7 +6,7 @@ import logging
 import uuid
 import signal
 import random
-
+from common import stats_manager
 from common.config import Config
 from server.passenger import Passenger
 from server.room import Room
@@ -118,6 +118,8 @@ class Server:
             self.server_socket,
             self.send_cooldown_notification,
             self.remove_room,
+            self.addr_to_sciper,
+            self.record_disconnection,
         )
 
         logger.info(f"Created new room {room_id} with {nb_players_per_room} clients")
@@ -259,6 +261,7 @@ class Server:
 
     def send_disconnect(self, addr, message="Unknown client or invalid message format"):
         """Disconnect a client from the server"""
+        logger.debug(f"Sending disconnect request to unknown client {addr}")
         # ask the client to disconnect
         disconnect_message = {
             "type": "disconnect",
@@ -425,6 +428,9 @@ class Server:
         logger.info(
             f"New client {nickname} (sciper: {agent_sciper}) connecting from {addr}"
         )
+
+        # --- Record Connection Stats ---
+        stats_manager.record_connection(agent_sciper, nickname)
 
         # Initialize client activity tracking
         self.client_last_activity[addr] = time.time()
@@ -708,6 +714,7 @@ class Server:
 
     def handle_client_disconnection(self, addr, reason="unknown"):
         """Handle client disconnection - centralized method to avoid code duplication"""
+        logger.debug(f"Handling client disconnection for {addr} due to {reason}")
         # Check if client is already marked as disconnected
         if addr in self.disconnected_clients:
             # Already disconnected, no need to process again
@@ -717,6 +724,7 @@ class Server:
         self.disconnected_clients.add(addr)
 
         nickname = self.addr_to_name.get(addr, "Unknown client")
+        sciper = self.addr_to_sciper.get(addr) # Get sciper BEFORE deleting it
 
         # Only log at INFO level if this is a known client
         if nickname != "Unknown client":
@@ -764,15 +772,12 @@ class Server:
             # Log at debug level for unknown clients to reduce spam
             logger.debug(f"Unknown client disconnected due to {reason}: {addr}")
 
-        # Common cleanup for the disconnected client's address info - moved outside the room loop
-        # to ensure it happens even if client is not found in a room
-        if addr in self.addr_to_name:
-            del self.addr_to_name[addr]
+        self.record_disconnection(sciper, reason)
 
         # Clean up sciper information
         if addr in self.addr_to_sciper:
-            sciper = self.addr_to_sciper[addr]
-            if sciper in self.sciper_to_addr:
+            # sciper = self.addr_to_sciper[addr] # Moved up
+            if sciper and sciper in self.sciper_to_addr:
                 del self.sciper_to_addr[sciper]
             del self.addr_to_sciper[addr]
 
@@ -785,6 +790,16 @@ class Server:
 
         if addr in self.ping_responses:
             del self.ping_responses[addr]
+
+    def record_disconnection(self, sciper, reason):
+        # Record disconnection stats *after* getting sciper and *before* potential errors/returns
+        if sciper:
+            premature = (reason != "client quit") # Consider premature if not an explicit quit
+            logger.info(f"Calling record_disconnection for sciper {sciper}, premature={premature} (reason='{reason}')")
+            try:
+                stats_manager.record_disconnection(sciper, premature=premature)
+            except Exception as e:
+                logger.error(f"Error calling stats_manager.record_disconnection for {sciper}: {e}")
 
     def remove_room(self, room_id):
         """Remove a room from the server"""
@@ -874,6 +889,7 @@ class Server:
             for addr in client_addresses:
                 # try-except around send_disconnect in case socket is already bad
                 try:
+                    logger.debug(f"Disconnecting client {addr}")
                     self.send_disconnect(addr, "Server shutting down")
                     # Optional small delay to increase chance of message delivery
                     time.sleep(0.01)

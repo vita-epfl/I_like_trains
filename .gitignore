@@ -7,3 +7,8 @@ player_scores.json
 
 config.json
 common/agents/staff_*
+Dockerfile
+.dockerignore
+
+stats/
+stats-docker/

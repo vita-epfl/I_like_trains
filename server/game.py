@@ -82,9 +82,9 @@ class Game:
         self.last_delivery_times = {}  # {nickname: last_delivery_time}
         self.running = True
 
-        self.high_score_all_time = HighScore()
-        self.high_score_all_time.load() 
-        self.high_score_all_time.dump()
+        # self.high_score_all_time = HighScore()
+        # self.high_score_all_time.load() 
+        # self.high_score_all_time.dump()
 
         # Dirty flags for the game
         self._dirty = {
