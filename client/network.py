@@ -68,7 +68,7 @@ class NetworkManager:
             # On laisse le client gérer l'affichage du message et la fermeture
             logger.warning("Server disconnection detected. Stopping client.")
 
-        if self.socket:
+        if self.socket and self.socket is not None:
             # Envoyer un message à nous-même pour débloquer le recvfrom
             if hasattr(self, "server_addr"):
                 try:
