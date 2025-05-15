@@ -10,6 +10,7 @@ from client.network import NetworkManager
 from client.renderer import Renderer
 from client.event_handler import EventHandler
 from client.game_state import GameState
+from client.agent_thread import AgentThread
 
 from common.config import Config
 from common.client_config import GameMode
@@ -75,6 +76,8 @@ class Client:
         self.cell_size = 0
         self.game_width = 200  # Initial game area width
         self.game_height = 200  # Initial game area height
+
+        self.REFERENCE_TICK_RATE = REFERENCE_TICK_RATE
 
         # Space between game area and leaderboard
         self.game_screen_padding = 20
@@ -150,6 +153,15 @@ class Client:
 
         self.ping_response_received = False
         self.server_disconnected = False
+
+        self.last_update = None
+        
+        # Initialiser et démarrer le thread d'agent si on est en mode AGENT
+        self.agent_thread = None
+        if self.game_mode == GameMode.AGENT and self.agent is not None:
+            self.agent_thread = AgentThread(self)
+            self.agent_thread.start()
+            logger.info("Agent thread started")
 
     def update_game_window_size(self, width=None, height=None):
         """Schedule window size update to be done in main thread"""
@@ -234,7 +246,7 @@ class Client:
         clock = pygame.time.Clock()
         while self.running:
             self.update()
-            clock.tick(REFERENCE_TICK_RATE)
+            clock.tick(self.REFERENCE_TICK_RATE)
 
         # Close connection
         self.network.disconnect()

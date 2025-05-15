@@ -4,9 +4,10 @@ import time
 
 from common.client_config import GameMode
 
-
 logger = logging.getLogger("client.game_state")
 
+INITIAL_SPEED = 10
+SPEED_DECREMENT_COEFFICIENT = 0.95  # Speed reduction coefficient for each wagon
 
 class GameState:
     """Class responsible for managing the game state"""
@@ -18,7 +19,6 @@ class GameState:
 
     def handle_state_data(self, data):
         """Handle game state data received from the server"""
-
         if not isinstance(data, dict):
             logger.warning("Received non-dictionary state data: " + str(data))
             return
@@ -119,9 +119,13 @@ class GameState:
             
             # Check if the train is in the client's stored trains collection
             train_exists = self.client.nickname in self.client.trains
-                            
-            if not self.client.is_dead and train_exists:
-                self.client.agent.update_agent()
+
+            # Le thread gère indépendamment l'appel à update_agent() au bon rythme
+            # et les vérifications de temps de réponse
+            if self.client.last_update is None and not self.client.is_dead and train_exists:
+                # Initialize the last update time if it's not set
+                # Seulement pour la première initialisation
+                self.client.last_update = time.time()
 
     def handle_leaderboard_data(self, data):
         """Handle leaderboard data received from the server"""
