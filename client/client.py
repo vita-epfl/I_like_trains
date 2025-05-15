@@ -153,8 +153,6 @@ class Client:
 
         self.ping_response_received = False
         self.server_disconnected = False
-
-        self.last_update = None
         
         # Initialiser et démarrer le thread d'agent si on est en mode AGENT
         self.agent_thread = None

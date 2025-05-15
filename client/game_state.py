@@ -116,16 +116,6 @@ class GameState:
                 self.client.agent.game_height = self.client.game_height
             if self.client.agent.delivery_zone is None:
                 self.client.agent.delivery_zone = self.client.delivery_zone
-            
-            # Check if the train is in the client's stored trains collection
-            train_exists = self.client.nickname in self.client.trains
-
-            # Le thread gère indépendamment l'appel à update_agent() au bon rythme
-            # et les vérifications de temps de réponse
-            if self.client.last_update is None and not self.client.is_dead and train_exists:
-                # Initialize the last update time if it's not set
-                # Seulement pour la première initialisation
-                self.client.last_update = time.time()
 
     def handle_leaderboard_data(self, data):
         """Handle leaderboard data received from the server"""
