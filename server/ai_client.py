@@ -7,6 +7,8 @@ import logging
 import json
 from server.passenger import Passenger
 import importlib
+import os
+import sys
 
 
 logger = logging.getLogger("server.ai_client")
@@ -68,7 +70,15 @@ class AIClient:
     """
 
     def __init__(self, room, nickname, ai_agent_file_name=None, waiting_for_respawn=False, is_dead=False):
-        """Initialize the AI client"""
+        """Initialize the AI client
+        
+        Args:
+            room: The room the AI client is in
+            nickname: The nickname of the AI client
+            ai_agent_file_name: The filename of the agent implementation
+            waiting_for_respawn: Whether the AI is waiting for respawn
+            is_dead: Whether the AI is dead
+        """
         logger.debug(f"Initializing AI client {nickname}, waiting_for_respawn: {waiting_for_respawn}, is_dead: {is_dead}")
         self.room = room
         self.game = room.game
@@ -91,13 +101,23 @@ class AIClient:
                 # Remove .py extension
                 ai_agent_file_name = ai_agent_file_name[:-3]
 
-            # Construct the module path correctly
-            module_path = f"common.agents.{ai_agent_file_name}"
+                # Get the project root directory
+                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                bots_path = os.path.join(project_root, "bots")
+                
+                # Add the directory to sys.path temporarily
+                if bots_path not in sys.path:
+                    sys.path.insert(0, bots_path)
+                
+            else:
+                # Default: use common/agents directory
+                module_path = f"common.agents.{ai_agent_file_name}"
+                
             logger.info(f"Importing module: {module_path}")
 
             module = importlib.import_module(module_path)
             self.agent = module.Agent(nickname, self.network, logger="server.ai_agent", timeout=1 / self.room.config.tick_rate)
-            logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name}")
+            logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name} from {bots_path}")
 
         except ImportError as e:
             logger.error(f"Failed to import AI agent for {nickname}: {e}")
