@@ -3,10 +3,11 @@ venv
 *.log
 
 server/config.txt
-player_scores.json
+*.json
 
-config.json
-common/agents/staff_*
+agents/staff_*
+bots/staff_*
+
 Dockerfile
 .dockerignore
 
