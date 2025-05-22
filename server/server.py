@@ -96,12 +96,13 @@ class Server:
         )  # Track disconnected clients by full address tuple (IP, port)
         self.threads = []  # Initialize threads attribute
 
-        # Create the first room
-        self.create_room(True)
-
         if self.config.grading_mode:
             logger.info("Server started in grading mode")
+            self.run_grading_mode()
             return
+        else:
+            # In normal mode, just create the first room
+            self.create_room(True, self.config.nb_players_per_room)
 
         # Ping tracking for active connection checking
         self.ping_interval = self.config.client_timeout_seconds / 2
@@ -157,13 +158,12 @@ class Server:
 
         logger.info("All agent files verified successfully")
 
-    def create_room(self, running):
+    def create_room(self, running, nb_players_per_room):
         """
         Create a new room with specified number of clients
         """
         room_id = str(uuid.uuid4())[:8]
 
-        nb_players_per_room = self.config.nb_players_per_room
         if nb_players_per_room == "random":
             nb_players_per_room = random.randint(2, 4)
             logger.info(f"Randomly selected {nb_players_per_room} clients per room.")
@@ -198,7 +198,7 @@ class Server:
             ):
                 return room
         # If no suitable room found, create a new one
-        return self.create_room(True)
+        return self.create_room(True, self.config.nb_players_per_room)
 
     def accept_clients(self):
         """Thread that waits for new connections"""
@@ -861,6 +861,63 @@ class Server:
                 stats_manager.record_disconnection(sciper, premature=premature)
             except Exception as e:
                 logger.error(f"Error calling stats_manager.record_disconnection for {sciper}: {e}")
+
+    def run_grading_mode(self):
+        """Run evaluation for all agents in the agents folder"""
+        # Get the configuration parameters for grading mode
+        nb_players_per_session_list = self.config.grading_mode_args.nb_players_per_session
+        nb_runs_per_session = self.config.grading_mode_args.nb_runs_per_session
+        
+        # Get the path to the agents folder
+        agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agents")
+        logger.info(f"Looking for agents in: {agents_dir}")
+        
+        # Find all Python files in the agents folder that don't have .template extension
+        agent_files = []
+        for file in os.listdir(agents_dir):
+            if file.endswith(".py") and not file.endswith(".template"):
+                agent_files.append(file)
+        
+        if not agent_files:
+            logger.warning("No agent files found in the agents folder!")
+            return
+        
+        logger.info(f"Found {len(agent_files)} agent(s) to evaluate: {agent_files}")
+        
+        # For each agent to evaluate in the folder "agents"
+        for agent_file in agent_files:
+            agent_name = os.path.splitext(agent_file)[0]
+            logger.info(f"Evaluating agent: {agent_name}")
+            
+            # For each 'nb_players_per_session'
+            for nb_players in nb_players_per_session_list:
+                logger.info(f"Running evaluation with {nb_players} players per session")
+                
+                # For 'nb_runs_per_session' times
+                for run_index in range(nb_runs_per_session):
+                    logger.info(f"Starting run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players")
+                    
+                    # Create a room with the specified number of players
+                    room = self.create_room(True, nb_players)
+                    
+                    # Add the student agent to evaluate
+                    student_nickname = f"Student_{agent_name}"
+                    room.add_ai(ai_nickname=student_nickname, ai_agent_file_name=agent_file)
+                    
+                    # # Use the existing fill_with_bots method to add bots to fill the room
+                    # bots_needed = nb_players - 1  # -1 for the student agent
+                    # room.fill_with_bots(bots_needed)
+                    
+                    # # Start the game
+                    # room.start_game()
+                    
+                    # Wait for this room to finish before creating the next one
+                    if room and room.game_thread:
+                        room.game_thread.join()
+                    
+                    logger.info(f"Completed run {run_index + 1}/{nb_runs_per_session} for {agent_name}")
+        
+        logger.info("Completed all evaluation runs")
 
     def remove_room(self, room_id):
         """Remove a room from the server"""
