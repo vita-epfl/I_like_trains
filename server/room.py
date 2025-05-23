@@ -105,7 +105,7 @@ class Room:
             self.random,
         )
 
-        logger.info(f"Room {room_id} created with number of clients {nb_players_max}")
+        logger.debug(f"Room {room_id} created with number of clients {nb_players_max}")
 
     def start_game(self):
         logger.debug("Starting game...")
@@ -124,6 +124,8 @@ class Room:
         self.game.current_tick = 0
 
         logger.info(f"Game started in room {self.id} at tick {self.tick_counter}")
+        # log all clients
+        logger.info(f"Clients in room {self.id}: {self.clients}")
 
         # Send game_started_success message - Moved before the grading mode check
         response = {"type": "game_started_success"}
@@ -145,7 +147,7 @@ class Room:
         
         # In grading mode, we add all configured agents to the game
         if self.config.grading_mode:
-            logger.info("Starting game in grading mode")
+            logger.debug("Starting game in grading mode")
             if len(self.config.agents) > 0:
                 # Clear any existing AI clients first to avoid duplicates
                 self.ai_clients = {}
@@ -155,13 +157,13 @@ class Room:
                 for agent in self.config.agents:
                     ai_nickname = self.get_available_ai_name(agent)
                     ai_agent_file_name = agent.agent_file_name
-                    logger.info(f"Adding AI client {ai_nickname} with agent {ai_agent_file_name}")
+                    logger.debug(f"Adding AI client {ai_nickname} with agent {ai_agent_file_name}")
                     self.add_ai(ai_nickname=ai_nickname, ai_agent_file_name=ai_agent_file_name)
             else:
                 logger.warning("No agents configured in config.json for grading mode")
         else:
             # In normal mode, we add all human players to the game first and then add bots if needed
-            logger.info("Starting game in normal mode")
+            logger.debug("Starting game in normal mode")
             
             self.add_all_trains()
             
@@ -171,11 +173,11 @@ class Room:
 
             for ai_name, ai_client in self.game.ai_clients.items():
                 if ai_name not in self.game.trains:
-                    logger.info(f"Adding train for AI client {ai_name}")
+                    logger.debug(f"Adding train for AI client {ai_name}")
                 
                 # Log train status
                 if ai_name in self.game.trains:
-                    logger.info(f"Train {ai_name} initialized at position {self.game.trains[ai_name].position}")
+                    logger.debug(f"Train {ai_name} initialized at position {self.game.trains[ai_name].position}")
                 else:
                     logger.warning(f"Failed to add train for AI client {ai_name}")
         
@@ -185,7 +187,7 @@ class Room:
         self.game_thread.daemon = True
         self.game_thread.start()
 
-        logger.info(
+        logger.debug(
             f"Game started in room {self.id} with {len(self.clients)} clients"
         )
             
@@ -212,10 +214,10 @@ class Room:
         else:
             speed_description = f"{reference_tickrate/self.config.tick_rate:.1f}x slower than normal"
             
-        logger.info(f"Game running at {speed_description} (tickrate: {self.config.tick_rate}).")
-        logger.info(f"Acceleration in comparison to reference tickrate: {self.config.tick_rate / reference_tickrate:.2f}")
-        logger.info(f"Game seconds per tick: {game_seconds_per_tick:.4f}s")
-        logger.info(f"Real seconds per tick: {real_seconds_per_tick*1000:.2f}ms")
+        logger.debug(f"Game running at {speed_description} (tickrate: {self.config.tick_rate}).")
+        logger.debug(f"Acceleration in comparison to reference tickrate: {self.config.tick_rate / reference_tickrate:.2f}")
+        logger.debug(f"Game seconds per tick: {game_seconds_per_tick:.4f}s")
+        logger.debug(f"Real seconds per tick: {real_seconds_per_tick*1000:.2f}ms")
         
         # Initialize game time to zero
         game_time_elapsed = 0.0
@@ -537,7 +539,7 @@ class Room:
             time.sleep(
                 2
             )  # Wait 2 seconds to ensure clients receive the game over message
-            logger.info(f"Closing room {self.id} after game over")
+            logger.debug(f"Closing room {self.id} after game over")
             self.running = False
             # Remove the room from the server
             self.remove_room(self.id)
@@ -770,7 +772,7 @@ class Room:
         """Create an AI client to control a train"""
 
         # Creating a new AI train (not replacing an existing one)
-        logger.info(f"Creating new AI train with name {ai_nickname}")
+        logger.debug(f"Creating new AI train with name {ai_nickname}")
 
         # Add the train to the game
         if self.game.add_train(ai_nickname):
@@ -778,7 +780,7 @@ class Room:
             self.clients[("AI", ai_nickname)] = ai_nickname
 
             # Import the AI agent from the config path
-            logger.info(
+            logger.debug(
                 f"Creating AI client {ai_nickname} using agent from {ai_agent_file_name}"
             )
 
@@ -789,7 +791,7 @@ class Room:
             # Add the ai_client to the game
             self.game.ai_clients[ai_nickname] = self.ai_clients[ai_nickname]
 
-            logger.info(f"Added new AI train {ai_nickname} to room {self.id}")
+            logger.debug(f"Added new AI train {ai_nickname} to room {self.id}")
             return ai_nickname
         else:
             logger.error(f"Failed to add new AI train {ai_nickname} to game")
@@ -801,7 +803,7 @@ class Room:
             logger.warning(f"AI already exists for train {train_nickname_to_replace}")
             return
 
-        logger.info(f"Creating AI client for train {train_nickname_to_replace}")
+        logger.debug(f"Creating AI client for train {train_nickname_to_replace}")
 
         # Change the train's name in the game
         if train_nickname_to_replace in self.game.trains:
