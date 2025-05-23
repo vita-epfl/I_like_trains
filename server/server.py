@@ -922,6 +922,10 @@ class Server:
         # Store reference to the scores in self for access from Room.end_game
         self.grading_scores = scores
         
+        # Start timing the evaluation process
+        start_time = datetime.datetime.now()
+        self.logger.info(f"Starting evaluation at {start_time}")
+        
         # For each agent to evaluate in the folder "agents"
         for agent_file in agent_files:
             agent_name = os.path.splitext(agent_file)[0]
@@ -967,6 +971,11 @@ class Server:
         # Save DataFrame to Excel
         df.to_excel(excel_path)
         self.logger.info(f"Saved grading results to {excel_path}")
+        
+        # Calculate and log the total execution time
+        end_time = datetime.datetime.now()
+        execution_time = end_time - start_time
+        self.logger.info(f"Total execution time: {execution_time}")
         
         self.logger.info("Completed all evaluation runs")
 
