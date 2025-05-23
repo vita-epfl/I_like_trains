@@ -98,21 +98,11 @@ class AIClient:
             if ai_agent_file_name.endswith(".py"):
                 # Remove .py extension
                 ai_agent_file_name = ai_agent_file_name[:-3]
-            module_path = f"common.agents.{ai_agent_file_name}"
+                module_path = f"common.agents.{ai_agent_file_name}"
             logger.info(f"Importing module: {module_path}")
 
             module = importlib.import_module(module_path)
-            if not is_grading_mode:
-                agent_logger = "server.ai_agent"
-                log_level = logging.DEBUG
-            else:
-                # Disable logging for grading mode
-                agent_logger = "server.ai_agent"
-                log_level = logging.CRITICAL  # Set to CRITICAL to effectively disable most logs
-            self.agent = module.Agent(nickname, self.network, logger=agent_logger, timeout=1 / self.room.config.tick_rate)
-            # Explicitly set log level based on grading mode
-            if is_grading_mode:
-                self.agent.logger.setLevel(log_level)
+            self.agent = module.Agent(nickname, self.network, logger="server.ai_agent", timeout=1 / self.room.config.tick_rate)
             logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name}")
 
         except ImportError as e:
