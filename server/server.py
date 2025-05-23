@@ -165,7 +165,7 @@ class Server:
 
         self.logger.info("All agent files verified successfully")
 
-    def create_room(self, running, nb_players_per_room):
+    def create_room(self, running, nb_players_per_room, tqdm_message=None):
         """
         Create a new room with specified number of clients
         """
@@ -187,6 +187,7 @@ class Server:
             self.remove_room,
             self.addr_to_sciper,
             self.record_disconnection,
+            tqdm_message,
         )
 
         self.rooms[room_id] = new_room
@@ -901,10 +902,10 @@ class Server:
                 
                 # For 'nb_runs_per_session' times
                 for run_index in range(nb_runs_per_session):
-                    self.logger.info(f"Starting run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players")
+                    tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players"
                     
                     # Create a room with the specified number of players
-                    room = self.create_room(True, nb_players)
+                    room = self.create_room(True, nb_players, tqdm_message)
                     
                     # Add the student agent to evaluate
                     student_nickname = f"Student_{agent_name}"
@@ -921,8 +922,6 @@ class Server:
                     if room and room.game_thread:
                         room.game_thread.join()
                     
-                    self.logger.info(f"Completed run {run_index + 1}/{nb_runs_per_session} for {agent_name}")
-        
         self.logger.info("Completed all evaluation runs")
 
     def remove_room(self, room_id):

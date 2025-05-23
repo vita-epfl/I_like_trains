@@ -3,6 +3,7 @@ import logging
 import random
 import threading
 import time
+from tqdm import tqdm
 
 from common.server_config import ServerConfig
 from common import stats_manager
@@ -53,6 +54,7 @@ class Room:
         remove_room,
         addr_to_sciper,
         record_disconnection,
+        tqdm_message=None,
     ):
         self.config = config
         self.id = room_id
@@ -63,6 +65,7 @@ class Room:
         self.remove_room = remove_room
         self.addr_to_sciper = addr_to_sciper
         self.record_disconnection = record_disconnection
+        self.tqdm_message = tqdm_message
 
         # Initialize random seed if provided in config, otherwise generate one
         if self.config.seed is None:
@@ -221,7 +224,13 @@ class Room:
         game_start_time = time.time()
         
         # Run the simulation for the calculated number of ticks
-        for update_count in range(total_updates):
+        # Use tqdm progress bar only in grading mode
+        if self.config.grading_mode:
+            iteration_range = tqdm(range(total_updates), desc=self.tqdm_message, unit="ticks")
+        else:
+            iteration_range = range(total_updates)
+            
+        for update_count in iteration_range:
             if not self.running or self.game_over:
                 break
                 
