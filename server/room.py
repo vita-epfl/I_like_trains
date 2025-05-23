@@ -145,41 +145,21 @@ class Room:
             except Exception as e:
                 logger.error(f"Error sending start success to client: {e}")
         
-        # In grading mode, we add all configured agents to the game
-        if self.config.grading_mode:
-            logger.debug("Starting game in grading mode")
-            if len(self.config.agents) > 0:
-                # Clear any existing AI clients first to avoid duplicates
-                self.ai_clients = {}
-                self.game.ai_clients = {}
-                
-                # Add all configured agents
-                for agent in self.config.agents:
-                    ai_nickname = self.get_available_ai_name(agent)
-                    ai_agent_file_name = agent.agent_file_name
-                    logger.debug(f"Adding AI client {ai_nickname} with agent {ai_agent_file_name}")
-                    self.add_ai(ai_nickname=ai_nickname, ai_agent_file_name=ai_agent_file_name)
-            else:
-                logger.warning("No agents configured in config.json for grading mode")
-        else:
-            # In normal mode, we add all human players to the game first and then add bots if needed
-            logger.debug("Starting game in normal mode")
-            
-            self.add_all_trains()
-            
-            current_players = self.get_player_count()
-            nb_bots_needed = self.nb_players_max - current_players
-            self.fill_with_bots(nb_bots_needed)
+        self.add_all_trains()
+        
+        current_players = self.get_player_count()
+        nb_bots_needed = self.nb_players_max - current_players
+        self.fill_with_bots(nb_bots_needed)
 
-            for ai_name, ai_client in self.game.ai_clients.items():
-                if ai_name not in self.game.trains:
-                    logger.debug(f"Adding train for AI client {ai_name}")
-                
-                # Log train status
-                if ai_name in self.game.trains:
-                    logger.debug(f"Train {ai_name} initialized at position {self.game.trains[ai_name].position}")
-                else:
-                    logger.warning(f"Failed to add train for AI client {ai_name}")
+        for ai_name in self.game.ai_clients.keys():
+            if ai_name not in self.game.trains:
+                logger.debug(f"Adding train for AI client {ai_name}")
+            
+            # Log train status
+            if ai_name in self.game.trains:
+                logger.debug(f"Train {ai_name} initialized at position {self.game.trains[ai_name].position}")
+            else:
+                logger.warning(f"Failed to add train for AI client {ai_name}")
         
         # In grading mode, we run the simulation directly in this thread
         # Create and start game thread
@@ -562,9 +542,14 @@ class Room:
         ]
 
     def get_player_count(self):
-        return len(
+        # Count human players (non-observers)
+        player_count = len(
             [mode for mode in self.client_game_modes.values() if mode != "observer"]
         )
+        # Add AI clients if the attribute exists
+        if hasattr(self, 'ai_clients'):
+            player_count += len(self.ai_clients)
+        return player_count
 
     def get_observer_count(self):
         return len(
@@ -776,9 +761,6 @@ class Room:
 
         # Add the train to the game
         if self.game.add_train(ai_nickname):
-            # Add the AI client to the room
-            self.clients[("AI", ai_nickname)] = ai_nickname
-
             # Import the AI agent from the config path
             logger.debug(
                 f"Creating AI client {ai_nickname} using agent from {ai_agent_file_name}"
