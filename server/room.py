@@ -95,6 +95,15 @@ class Room:
         self.AI_NAMES = AI_NAMES  # Store the AI names as an instance attribute
         self.used_nicknames = set(self.clients.keys())
 
+        self.game = Game(
+            self.config,
+            self.send_cooldown_notification,
+            self.nb_players_max,
+            self.id,
+            self.seed,
+            self.random,
+        )
+
         logger.info(f"Room {room_id} created with number of clients {nb_players_max}")
 
     def start_game(self):
@@ -106,15 +115,6 @@ class Room:
 
         if self.game_thread:
             return
-
-        self.game = Game(
-            self.config,
-            self.send_cooldown_notification,
-            self.nb_players_max,
-            self.id,
-            self.seed,
-            self.random,
-        )
 
         # Reset tick counter            
         self.game.start_time = time.time()  # Start at tick 0
