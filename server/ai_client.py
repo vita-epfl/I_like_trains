@@ -100,24 +100,12 @@ class AIClient:
             if ai_agent_file_name.endswith(".py"):
                 # Remove .py extension
                 ai_agent_file_name = ai_agent_file_name[:-3]
-
-                # Get the project root directory
-                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                bots_path = os.path.join(project_root, "bots")
-                
-                # Add the directory to sys.path temporarily
-                if bots_path not in sys.path:
-                    sys.path.insert(0, bots_path)
-                
-            else:
-                # Default: use common/agents directory
-                module_path = f"common.agents.{ai_agent_file_name}"
-                
+            module_path = f"common.agents.{ai_agent_file_name}"
             logger.info(f"Importing module: {module_path}")
 
             module = importlib.import_module(module_path)
             self.agent = module.Agent(nickname, self.network, logger="server.ai_agent", timeout=1 / self.room.config.tick_rate)
-            logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name} from {bots_path}")
+            logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name}")
 
         except ImportError as e:
             logger.error(f"Failed to import AI agent for {nickname}: {e}")
