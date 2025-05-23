@@ -7,10 +7,10 @@ import logging
 import json
 from server.passenger import Passenger
 import importlib
-
+import os
+import sys
 
 logger = logging.getLogger("server.ai_client")
-
 
 class AINetworkInterface:
     """
@@ -68,7 +68,15 @@ class AIClient:
     """
 
     def __init__(self, room, nickname, ai_agent_file_name=None, waiting_for_respawn=False, is_dead=False):
-        """Initialize the AI client"""
+        """Initialize the AI client
+        
+        Args:
+            room: The room the AI client is in
+            nickname: The nickname of the AI client
+            ai_agent_file_name: The filename of the agent implementation
+            waiting_for_respawn: Whether the AI is waiting for respawn
+            is_dead: Whether the AI is dead
+        """
         logger.debug(f"Initializing AI client {nickname}, waiting_for_respawn: {waiting_for_respawn}, is_dead: {is_dead}")
         self.room = room
         self.game = room.game
@@ -90,9 +98,7 @@ class AIClient:
             if ai_agent_file_name.endswith(".py"):
                 # Remove .py extension
                 ai_agent_file_name = ai_agent_file_name[:-3]
-
-            # Construct the module path correctly
-            module_path = f"common.agents.{ai_agent_file_name}"
+                module_path = f"common.agents.{ai_agent_file_name}"
             logger.info(f"Importing module: {module_path}")
 
             module = importlib.import_module(module_path)
@@ -109,7 +115,7 @@ class AIClient:
         self.agent.delivery_zone = self.game.delivery_zone.to_dict()
 
         self.running = True
-        logger.info(f"AI client {nickname} started")
+        logger.debug(f"AI client {nickname} started")
 
     def update_state(self, state_data):
         """Update the state from the game"""
@@ -186,4 +192,5 @@ class AIClient:
 
     def stop(self):
         """Stop the AI client"""
+        logger.debug(f"Stopping AI client {self.nickname}")
         self.running = False

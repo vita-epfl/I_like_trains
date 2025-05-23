@@ -1,7 +1,12 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 from common.agent_config import AgentConfig
+
+
+class GradingModeArgs(BaseModel):
+    nb_players_per_session: List[int] = [1, 2, 3, 4]
+    nb_runs_per_session: int = 50
 
 
 class ServerConfig(BaseModel):
@@ -42,6 +47,15 @@ class ServerConfig(BaseModel):
     # In grading mode, we add all configured agents to the game.
     # If grading_mode is enabled, tick_rate is set to 10000 to run as fast as possible.
     grading_mode: bool = False
+
+    # Grading mode specific arguments
+    # The configuration from JSON: 
+    # "grading_mode_args": {
+    #         "nb_players_per_session": [1, 2, 3, 4],
+    #         "nb_runs_per_session": 50
+    #     }
+    # is properly recognized by this model
+    grading_mode_args: Optional[GradingModeArgs] = None
 
     # Duration of each game.
     game_duration_seconds: int = 300  # 300 seconds == 5 minutes
