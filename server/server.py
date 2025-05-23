@@ -171,7 +171,7 @@ class Server:
 
         self.logger.info("All agent files verified successfully")
 
-    def create_room(self, running, nb_players_per_room, tqdm_message=None):
+    def create_room(self, running, nb_players_per_room, tqdm_message=None, bot_seed=None):
         """
         Create a new room with specified number of clients
         """
@@ -194,6 +194,7 @@ class Server:
             self.addr_to_sciper,
             self.record_disconnection,
             tqdm_message,
+            bot_seed,
         )
 
         self.rooms[room_id] = new_room
@@ -896,6 +897,13 @@ class Server:
             return
         
         self.logger.info(f"Found {len(agent_files)} agent(s) to evaluate: {agent_files}")
+
+        # Générer les seeds pour chaque run_index avant de commencer l'évaluation
+        # Ainsi, pour un même run_index, on aura toujours le même seed, peu importe l'agent ou nb_players
+        run_seeds = {}
+        for run_index in range(nb_runs_per_session):
+            run_seeds[run_index] = random.randint(1, 1000000)
+            self.logger.debug(f"Generated seed for run_index {run_index}: {run_seeds[run_index]}")
         
         # For each agent to evaluate in the folder "agents"
         for agent_file in agent_files:
@@ -904,14 +912,16 @@ class Server:
             
             # For each 'nb_players_per_session'
             for nb_players in nb_players_per_session_list:
-                self.logger.info(f"Running evaluation with {nb_players} players per session")
+                self.logger.debug(f"Running evaluation with {nb_players} players per session")
                 
                 # For 'nb_runs_per_session' times
                 for run_index in range(nb_runs_per_session):
-                    tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players"
+                    # Récupérer le seed correspondant au run_index actuel
+                    current_seed = run_seeds[run_index]
+                    tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players (seed: {current_seed})"
                     
-                    # Create a room with the specified number of players
-                    room = self.create_room(True, nb_players, tqdm_message)
+                    # Create a room with the specified number of players, passing the seed
+                    room = self.create_room(True, nb_players, tqdm_message, current_seed)
                     
                     # Add the student agent to evaluate
                     student_nickname = f"Student_{agent_name}"
@@ -928,8 +938,10 @@ class Server:
                     room.start_game()
                     
                     # Wait for this room to finish before creating the next one
-                    if room and room.game_thread:
+                    if room and room.game_thread and room.game_thread.is_alive():
                         room.game_thread.join()
+                    else:
+                        self.logger.warning(f"Game thread for {agent_name} run {run_index + 1} was not properly started")
                     
         self.logger.info("Completed all evaluation runs")
 

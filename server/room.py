@@ -55,6 +55,7 @@ class Room:
         addr_to_sciper,
         record_disconnection,
         tqdm_message=None,
+        bot_seed=None,
     ):
         self.config = config
         self.id = room_id
@@ -67,14 +68,16 @@ class Room:
         self.record_disconnection = record_disconnection
         self.tqdm_message = tqdm_message
 
-        # Initialize random seed if provided in config, otherwise generate one
-        if self.config.seed is None:
-            self.seed = random.randint(0, 2**32 - 1)
+        # Initialize random seed if provided directly or in config, otherwise generate one
+        if bot_seed is not None:
+            self.bot_seed = bot_seed
+        elif self.config.seed is not None:
+            self.bot_seed = self.config.seed
         else:
-            self.seed = self.config.seed
-        self.random = random.Random(self.seed)
+            self.bot_seed = random.randint(0, 2**32 - 1)
+        self.random = random.Random(self.bot_seed)
 
-        logger.debug(f"Room {self.id} created with seed {self.seed}")
+        logger.debug(f"Room {self.id} created with seed {self.bot_seed}")
 
         self.clients = {}  # {addr: nickname}
         self.client_game_modes = {}  # {addr: game_mode}
@@ -101,7 +104,7 @@ class Room:
             self.send_cooldown_notification,
             self.nb_players_max,
             self.id,
-            self.seed,
+            self.bot_seed,
             self.random,
         )
 
@@ -123,9 +126,8 @@ class Room:
         self.game.start_time_ticks = 0
         self.game.current_tick = 0
 
-        logger.info(f"Game started in room {self.id} at tick {self.tick_counter}")
-        # log all clients
-        logger.info(f"Clients in room {self.id}: {self.clients}")
+        logger.debug(f"Game started in room {self.id} at tick {self.tick_counter}")
+        logger.debug(f"Clients in room {self.id}: {self.clients}")
 
         # Send game_started_success message - Moved before the grading mode check
         response = {"type": "game_started_success"}
@@ -713,15 +715,18 @@ class Room:
         if nb_bots_needed <= 0:
             return
 
-        logger.info(f"Adding {nb_bots_needed} bots to room {self.id}")
+        logger.debug(f"Adding {nb_bots_needed} bots to room {self.id} (seed: {self.bot_seed})")
 
         # If we need less bots or an equal number to the available list, we pick the bots
         # randomly (without repetition).
         # If we need more, we pick each one at least once.
         agents = self.config.agents[:]
-        random.shuffle(agents)
+        
+        # Use the room's seeded random generator instead of the global one
+        # for deterministic bot selection
+        self.random.shuffle(agents)
         while len(agents) < nb_bots_needed:
-            agents.append(random.choice(self.config.agents))
+            agents.append(self.random.choice(self.config.agents))
         agents = agents[:nb_bots_needed]
 
         for agent in agents:
