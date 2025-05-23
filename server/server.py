@@ -31,24 +31,30 @@ def setup_server_logger(is_grading_mode):
     # Configure the main server logger
     server_logger = logging.getLogger("server")
     
-    # Configure the loggers of the sub-modules with default levels
-    modules = {
-        "server.room": logging.DEBUG,
-        "server.game": logging.DEBUG,
-        "server.train": logging.DEBUG,
-        "server.passenger": logging.DEBUG,
-        "server.delivery_zone": logging.DEBUG,
-        "server.ai_client": logging.DEBUG,
-        "server.ai_agent": logging.DEBUG,
-    }
-    
     # If in grading mode, set all modules to CRITICAL except server which should be INFO
     if is_grading_mode:
         server_logger.setLevel(logging.INFO)
-        for module in modules:
-            modules[module] = logging.CRITICAL
+        modules = {
+        "server.room": logging.CRITICAL,
+        "server.game": logging.CRITICAL,
+        "server.train": logging.CRITICAL,
+        "server.passenger": logging.CRITICAL,
+        "server.delivery_zone": logging.CRITICAL,
+        "server.ai_client": logging.CRITICAL,
+        "server.ai_agent": logging.CRITICAL,
+    }
     else:
         server_logger.setLevel(logging.DEBUG)
+        # Configure the loggers of the sub-modules with default levels
+        modules = {
+            "server.room": logging.DEBUG,
+            "server.game": logging.DEBUG,
+            "server.train": logging.DEBUG,
+            "server.passenger": logging.DEBUG,
+            "server.delivery_zone": logging.DEBUG,
+            "server.ai_client": logging.DEBUG,
+            "server.ai_agent": logging.DEBUG,
+        }
     
     server_logger.propagate = False
     server_logger.addHandler(console_handler)
