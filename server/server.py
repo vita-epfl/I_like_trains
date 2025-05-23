@@ -97,7 +97,6 @@ class Server:
         self.threads = []  # Initialize threads attribute
 
         if self.config.grading_mode:
-            logger.info("Server started in grading mode")
             self.run_grading_mode()
             return
         else:
@@ -864,13 +863,15 @@ class Server:
 
     def run_grading_mode(self):
         """Run evaluation for all agents in the agents folder"""
+        logger.info("Server started in grading mode")
+
         # Get the configuration parameters for grading mode
         nb_players_per_session_list = self.config.grading_mode_args.nb_players_per_session
         nb_runs_per_session = self.config.grading_mode_args.nb_runs_per_session
         
-        # Get the path to the agents folder
-        agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agents")
-        logger.info(f"Looking for agents in: {agents_dir}")
+        # Get the path to the agents to evaluate folder
+        agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "common", "agents", "agents_to_evaluate")
+        logger.info(f"Looking for agents to evaluate in: {agents_dir}")
         
         # Find all Python files in the agents folder that don't have .template extension
         agent_files = []
