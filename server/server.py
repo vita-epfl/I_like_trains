@@ -35,7 +35,7 @@ def setup_server_logger(is_grading_mode):
     if is_grading_mode:
         server_logger.setLevel(logging.INFO)
         modules = {
-        "server.room": logging.CRITICAL,
+        "server.room": logging.CRITICAL, # INFO to get information about the run completion and results
         "server.game": logging.CRITICAL,
         "server.train": logging.CRITICAL,
         "server.passenger": logging.CRITICAL,
