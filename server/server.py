@@ -17,7 +17,7 @@ from common.version import EXPECTED_CLIENT_VERSION
 from server.train import BOOST_COOLDOWN_DURATION
 
 
-def setup_server_logger():
+def setup_server_logger(is_grading_mode):
     # Create a handler for the console
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
@@ -30,36 +30,44 @@ def setup_server_logger():
 
     # Configure the main server logger
     server_logger = logging.getLogger("server")
-    server_logger.setLevel(logging.DEBUG)
+    
+    # Configure the loggers of the sub-modules with default levels
+    modules = {
+        "server.room": logging.DEBUG,
+        "server.game": logging.DEBUG,
+        "server.train": logging.DEBUG,
+        "server.passenger": logging.DEBUG,
+        "server.delivery_zone": logging.DEBUG,
+        "server.ai_client": logging.DEBUG,
+        "server.ai_agent": logging.DEBUG,
+    }
+    
+    # If in grading mode, set all modules to CRITICAL except server which should be INFO
+    if is_grading_mode:
+        server_logger.setLevel(logging.INFO)
+        for module in modules:
+            modules[module] = logging.CRITICAL
+    else:
+        server_logger.setLevel(logging.DEBUG)
+    
     server_logger.propagate = False
     server_logger.addHandler(console_handler)
-
-    # Configure the loggers of the sub-modules
-    modules = [
-        "server.room",
-        "server.game",
-        "server.train",
-        "server.passenger",
-        "server.delivery_zone",
-        "server.ai_client",
-        "server.ai_agent",
-    ]
-    for module in modules:
+    
+    # Configure each module logger with its specified level
+    for module, level in modules.items():
         logger = logging.getLogger(module)
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(level)
         logger.propagate = False
         logger.addHandler(console_handler)
 
     return server_logger
 
 
-# Configure the server logger
-logger = setup_server_logger()
-
-
 class Server:
     def __init__(self, config: Config):
         self.config = config.server
+
+        self.logger = setup_server_logger(self.config.grading_mode)
 
         # if grading mode, set waiting_time_before_bots_seconds to 0
         if self.config.grading_mode:
@@ -79,9 +87,9 @@ class Server:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((host, self.config.port))
-            logger.info(f"UDP socket created and bound to {host}:{self.config.port}")
+            self.logger.info(f"UDP socket created and bound to {host}:{self.config.port}")
         except Exception as e:
-            logger.error(f"Error creating UDP socket: {e}")
+            self.logger.error(f"Error creating UDP socket: {e}")
             raise
 
         self.running = True
@@ -119,9 +127,9 @@ class Server:
         # Get public IP and log server start
         public_ip = self.get_public_ip()
         if public_ip:
-            logger.info(f"Server started on {self.config.host}:{self.config.port} (Public IP: {public_ip})")
+            self.logger.info(f"Server started on {self.config.host}:{self.config.port} (Public IP: {public_ip})")
         else:
-            logger.info(f"Server started on {self.config.host}:{self.config.port} (Could not determine public IP)")
+            self.logger.info(f"Server started on {self.config.host}:{self.config.port} (Could not determine public IP)")
 
     def get_public_ip(self):
         """
@@ -132,7 +140,7 @@ class Server:
                 ip = response.read().decode('utf-8')
                 return ip
         except Exception as e:
-            logger.warning(f"Could not determine public IP address: {e}")
+            self.logger.warning(f"Could not determine public IP address: {e}")
             return None
             
     def verify_agent_files(self, config):
@@ -149,13 +157,13 @@ class Server:
             agent_file_path = os.path.join(agents_dir, agent.agent_file_name)
             if not os.path.exists(agent_file_path):
                 error_msg = f"Agent file not found: {agent.agent_file_name} for agent {agent.nickname}"
-                logger.error(error_msg)
+                self.logger.error(error_msg)
                 print(f"ERROR: {error_msg}")
                 print(f"The file should be located at: {agent_file_path}")
                 print("Server is shutting down.")
                 raise FileNotFoundError(f"Missing agent file: {agent_file_path}")
 
-        logger.info("All agent files verified successfully")
+        self.logger.info("All agent files verified successfully")
 
     def create_room(self, running, nb_players_per_room):
         """
@@ -165,11 +173,9 @@ class Server:
 
         if nb_players_per_room == "random":
             nb_players_per_room = random.randint(2, 4)
-            logger.info(f"Randomly selected {nb_players_per_room} clients per room.")
+            self.logger.info(f"Randomly selected {nb_players_per_room} clients per room.")
         else:
             nb_players_per_room = int(nb_players_per_room)
-
-        logger.info(f"Creating room {room_id} with size {nb_players_per_room}.")
 
         new_room = Room(
             self.config,
@@ -183,7 +189,6 @@ class Server:
             self.record_disconnection,
         )
 
-        logger.info(f"Created new room {room_id} with {nb_players_per_room} clients")
         self.rooms[room_id] = new_room
         return new_room
 
@@ -201,7 +206,7 @@ class Server:
 
     def accept_clients(self):
         """Thread that waits for new connections"""
-        logger.info("Server is listening for UDP packets")
+        self.logger.info("Server is listening for UDP packets")
         error_count = {}  # Track error count per client
 
         while self.running:
@@ -238,11 +243,11 @@ class Server:
                     # We'll just log it at a lower level or not at all
                     pass  # Don't log connection reset errors at all
                 else:
-                    logger.error(f"Socket error: {e}")
+                    self.logger.error(f"Socket error: {e}")
                 # Add a small delay to avoid high CPU usage on error
                 time.sleep(0.1)
             except Exception as e:
-                logger.error(f"Error in accept_clients: {e}")
+                self.logger.error(f"Error in accept_clients: {e}")
                 # Add a small delay to avoid high CPU usage on error
                 time.sleep(0.1)
 
@@ -273,7 +278,7 @@ class Server:
         ):
             if message["game_mode"] != "observer":
                 # use handle_name_check and handle_sciper_check to check if the name and sciper are available
-                logger.debug(
+                self.logger.debug(
                     f"Checking name and sciper availability for {message['nickname']} ({message['agent_sciper']})"
                 )
                 if self.handle_name_check(message, addr) and self.handle_sciper_check(
@@ -303,7 +308,7 @@ class Server:
                 )
                 return
             except Exception as e:
-                logger.error(f"Error sending pong to {addr}: {e}")
+                self.logger.error(f"Error sending pong to {addr}: {e}")
                 return
 
         agent_sciper = self.addr_to_sciper.get(addr)
@@ -318,7 +323,7 @@ class Server:
 
     def send_disconnect(self, addr, message="Unknown client or invalid message format"):
         """Disconnect a client from the server"""
-        logger.debug(f"Sending disconnect request to unknown client {addr}")
+        self.logger.debug(f"Sending disconnect request to unknown client {addr}")
         # ask the client to disconnect
         disconnect_message = {
             "type": "disconnect",
@@ -328,9 +333,9 @@ class Server:
             self.server_socket.sendto(
                 (json.dumps(disconnect_message) + "\n").encode(), addr
             )
-            logger.info(f"Sent disconnect request to unknown client {addr}")
+            self.logger.info(f"Sent disconnect request to unknown client {addr}")
         except Exception as e:
-            logger.error(f"Error sending disconnect request to {addr}: {e}")
+            self.logger.error(f"Error sending disconnect request to {addr}: {e}")
 
     # def handle_high_scores_request(self, addr):
     #     """Handle a request for high scores"""
@@ -350,9 +355,9 @@ class Server:
 
     #     try:
     #         self.server_socket.sendto((json.dumps(response) + "\n").encode(), addr)
-    #         logger.info(f"Sent high scores to client at {addr}")
+    #         self.logger.info(f"Sent high scores to client at {addr}")
     #     except Exception as e:
-    #         logger.error(f"Error sending high scores: {e}")
+    #         self.logger.error(f"Error sending high scores: {e}")
 
     def handle_name_check(self, message, addr):
         """Handle name check requests"""
@@ -369,7 +374,7 @@ class Server:
                         (json.dumps(response) + "\n").encode(), addr
                     )
                 except Exception as e:
-                    logger.error(f"Error sending name check response: {e}")
+                    self.logger.error(f"Error sending name check response: {e}")
                 return False
 
         # Check if the name exists in any room
@@ -383,13 +388,13 @@ class Server:
                     # Check if the client with this name is in disconnected_clients
                     if client_addr in self.disconnected_clients:
                         # Client is disconnected, name can be reused
-                        logger.debug(
+                        self.logger.debug(
                             f"Name '{name_to_check}' found in room {room_id} but client is disconnected, considering it available"
                         )
                         continue
                     # Client is connected, name is not available
                     name_available = False
-                    logger.debug(f"Name '{name_to_check}' found in room {room_id}")
+                    self.logger.debug(f"Name '{name_to_check}' found in room {room_id}")
                     break
             if not name_available:
                 break
@@ -401,7 +406,7 @@ class Server:
         # Check if name starts with "Bot " (invalid)
         if name_available and name_to_check.startswith("staff"):
             name_available = False
-            logger.debug(f"Name '{name_to_check}' starts with 'staff', not available")
+            self.logger.debug(f"Name '{name_to_check}' starts with 'staff', not available")
             reason = "name starts with 'staff'"
 
         if addr:
@@ -412,7 +417,7 @@ class Server:
             try:
                 self.server_socket.sendto((json.dumps(response) + "\n").encode(), addr)
             except Exception as e:
-                logger.error(f"Error sending name check response: {e}")
+                self.logger.error(f"Error sending name check response: {e}")
 
         return name_available
 
@@ -420,7 +425,7 @@ class Server:
         """Handle sciper check requests"""
         # Update client activity timestamp
         # self.client_last_activity[addr] = time.time()
-        logger.debug(f"Checking sciper availability for {message['agent_sciper']}")
+        self.logger.debug(f"Checking sciper availability for {message['agent_sciper']}")
 
         sciper_to_check = message.get("agent_sciper", "")
 
@@ -438,7 +443,7 @@ class Server:
                         (json.dumps(response) + "\n").encode(), addr
                     )
                 except Exception as e:
-                    logger.error(f"Error sending sciper check response: {e}")
+                    self.logger.error(f"Error sending sciper check response: {e}")
                 return False
             else:
                 return False
@@ -448,9 +453,9 @@ class Server:
 
             try:
                 self.server_socket.sendto((json.dumps(response) + "\n").encode(), addr)
-                logger.info(f"Sciper check for '{sciper_to_check}': available")
+                self.logger.info(f"Sciper check for '{sciper_to_check}': available")
             except Exception as e:
-                logger.error(f"Error sending sciper check response: {e}")
+                self.logger.error(f"Error sending sciper check response: {e}")
 
         return True
 
@@ -461,10 +466,10 @@ class Server:
         agent_sciper = message.get("agent_sciper", "")
         game_mode = message.get("game_mode", "")
 
-        logger.debug(f"Received agent ids: {nickname}, {agent_sciper}, {game_mode}")
+        self.logger.debug(f"Received agent ids: {nickname}, {agent_sciper}, {game_mode}")
 
         if game_mode == "observer":
-            logger.info(f"New client connected in OBSERVER mode: {addr}")
+            self.logger.info(f"New client connected in OBSERVER mode: {addr}")
             self.client_last_activity[addr] = time.time()
 
             # generate a random name and sciper
@@ -479,14 +484,14 @@ class Server:
 
         # else:
         if not nickname:
-            logger.warning("No agent name provided")
+            self.logger.warning("No agent name provided")
             return
 
         if not agent_sciper:
-            logger.warning("No agent sciper provided")
+            self.logger.warning("No agent sciper provided")
             return
 
-        logger.info(
+        self.logger.info(
             f"New client {nickname} (sciper: {agent_sciper}) connecting from {addr}"
         )
 
@@ -500,7 +505,7 @@ class Server:
         if agent_sciper in self.sciper_to_addr:
             old_addr = self.sciper_to_addr[agent_sciper]
             if old_addr != addr:  # Only if it's a different address
-                logger.info(
+                self.logger.info(
                     f"Cleaning up previous connection for sciper {agent_sciper} at {old_addr}"
                 )
                 # Remove from disconnected_clients if present
@@ -534,7 +539,7 @@ class Server:
         if selected_room.first_client_join_time is None:
             selected_room.first_client_join_time = time.time()
 
-        logger.info(
+        self.logger.info(
             f"Agent {nickname} (sciper: {agent_sciper}) joined room {selected_room.id}"
         )
 
@@ -580,7 +585,7 @@ class Server:
                     return
 
                 # For other message types, we need a valid room
-                logger.debug(
+                self.logger.debug(
                     f"Ignoring message from client {addr} as they are not in any room: {message}. Sending disconnect message"
                 )
                 self.handle_client_disconnection(addr, "Unknown client")
@@ -600,7 +605,7 @@ class Server:
             if message.get("action") == "respawn":
                 # Check if the game is over
                 if room.game_over:
-                    logger.info(
+                    self.logger.info(
                         f"Ignoring respawn request from {nickname} as the game is over"
                     )
                     response = {"type": "respawn_failed", "message": "Game is over"}
@@ -626,7 +631,7 @@ class Server:
                         (json.dumps(response) + "\n").encode(), addr
                     )
                 else:
-                    logger.warning(f"Failed to spawn train {nickname}")
+                    self.logger.warning(f"Failed to spawn train {nickname}")
                     # Inform the client of the failure
                     response = {
                         "type": "respawn_failed",
@@ -679,7 +684,7 @@ class Server:
                         )
 
         except Exception as e:
-            logger.error(f"Error handling client message: {e}")
+            self.logger.error(f"Error handling client message: {e}")
 
     def send_cooldown_notification(self, nickname, cooldown, death_reason):
         """Send a cooldown notification to a specific client"""
@@ -701,7 +706,7 @@ class Server:
                         )
                         return
                     except Exception as e:
-                        logger.error(
+                        self.logger.error(
                             f"Error sending cooldown notification to {nickname}: {e}"
                         )
                         return
@@ -748,7 +753,7 @@ class Server:
                     # Add the client to the ping responses dictionary with the current time
                     self.ping_responses[addr] = current_time
                 except Exception as e:
-                    logger.debug(f"Error sending ping to client {addr}: {e}")
+                    self.logger.debug(f"Error sending ping to client {addr}: {e}")
 
             # Wait for responses (half the ping interval)
             time.sleep(self.ping_interval / 2)
@@ -768,13 +773,13 @@ class Server:
             # Sleep for the remaining time of the ping interval
             time.sleep(self.ping_interval / 2)
             # except Exception as e:
-            #     logger.error(f"Error in ping_clients: {e}")
+            #     self.logger.error(f"Error in ping_clients: {e}")
             #     # Sleep on error to avoid high CPU usage
             #     time.sleep(self.ping_interval)
 
     def handle_client_disconnection(self, addr, reason="unknown"):
         """Handle client disconnection - centralized method to avoid code duplication"""
-        logger.debug(f"Handling client disconnection for {addr} due to {reason}")
+        self.logger.debug(f"Handling client disconnection for {addr} due to {reason}")
         # Check if client is already marked as disconnected
         if addr in self.disconnected_clients:
             # Already disconnected, no need to process again
@@ -788,14 +793,14 @@ class Server:
 
         # Only log at INFO level if this is a known client
         if nickname != "Unknown client":
-            logger.info(f"Client {nickname} disconnected due to {reason}: {addr}")
+            self.logger.info(f"Client {nickname} disconnected due to {reason}: {addr}")
 
             # Find the room this client is in and create an AI to control their train
             for room in self.rooms.values():
                 if addr in room.clients:
                     # Store the name before removing the client
                     original_nickname = room.clients[addr]
-                    logger.info(f"Removing {original_nickname} from room {room.id}")
+                    self.logger.info(f"Removing {original_nickname} from room {room.id}")
 
                     # Remove the client from the room's client list first
                     del room.clients[addr]
@@ -813,7 +818,7 @@ class Server:
 
                     if human_clients_count == 0:
                         # Last human left, close the room. No need to create AI.
-                        logger.info(
+                        self.logger.info(
                             f"Last human client {original_nickname} left room {room.id}, closing room"
                         )
                         # remove_room handles setting flags, stopping threads, and cleanup
@@ -830,7 +835,7 @@ class Server:
 
         else:
             # Log at debug level for unknown clients to reduce spam
-            logger.debug(f"Unknown client disconnected due to {reason}: {addr}")
+            self.logger.debug(f"Unknown client disconnected due to {reason}: {addr}")
 
         self.record_disconnection(sciper, reason)
 
@@ -855,15 +860,15 @@ class Server:
         # Record disconnection stats *after* getting sciper and *before* potential errors/returns
         if sciper:
             premature = (reason != "client quit") # Consider premature if not an explicit quit
-            logger.info(f"Calling record_disconnection for sciper {sciper}, premature={premature} (reason='{reason}')")
+            self.logger.info(f"Calling record_disconnection for sciper {sciper}, premature={premature} (reason='{reason}')")
             try:
                 stats_manager.record_disconnection(sciper, premature=premature)
             except Exception as e:
-                logger.error(f"Error calling stats_manager.record_disconnection for {sciper}: {e}")
+                self.logger.error(f"Error calling stats_manager.record_disconnection for {sciper}: {e}")
 
     def run_grading_mode(self):
         """Run evaluation for all agents in the agents folder"""
-        logger.info("Server started in grading mode")
+        self.logger.info("Server started in grading mode")
 
         # Get the configuration parameters for grading mode
         nb_players_per_session_list = self.config.grading_mode_args.nb_players_per_session
@@ -871,7 +876,7 @@ class Server:
         
         # Get the path to the agents to evaluate folder
         agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "common", "agents", "agents_to_evaluate")
-        logger.info(f"Looking for agents to evaluate in: {agents_dir}")
+        self.logger.info(f"Looking for agents to evaluate in: {agents_dir}")
         
         # Find all Python files in the agents folder that don't have .template extension
         agent_files = []
@@ -880,23 +885,23 @@ class Server:
                 agent_files.append(file)
         
         if not agent_files:
-            logger.warning("No agent files found in the agents folder!")
+            self.logger.warning("No agent files found in the agents folder!")
             return
         
-        logger.info(f"Found {len(agent_files)} agent(s) to evaluate: {agent_files}")
+        self.logger.info(f"Found {len(agent_files)} agent(s) to evaluate: {agent_files}")
         
         # For each agent to evaluate in the folder "agents"
         for agent_file in agent_files:
             agent_name = os.path.splitext(agent_file)[0]
-            logger.info(f"Evaluating agent: {agent_name}")
+            self.logger.info(f"Evaluating agent: {agent_name}")
             
             # For each 'nb_players_per_session'
             for nb_players in nb_players_per_session_list:
-                logger.info(f"Running evaluation with {nb_players} players per session")
+                self.logger.info(f"Running evaluation with {nb_players} players per session")
                 
                 # For 'nb_runs_per_session' times
                 for run_index in range(nb_runs_per_session):
-                    logger.info(f"Starting run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players")
+                    self.logger.info(f"Starting run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players")
                     
                     # Create a room with the specified number of players
                     room = self.create_room(True, nb_players)
@@ -905,46 +910,46 @@ class Server:
                     student_nickname = f"Student_{agent_name}"
                     room.add_ai(ai_nickname=student_nickname, ai_agent_file_name=agent_file)
                     
-                    # # Use the existing fill_with_bots method to add bots to fill the room
-                    # bots_needed = nb_players - 1  # -1 for the student agent
-                    # room.fill_with_bots(bots_needed)
+                    # Use the existing fill_with_bots method to add bots to fill the room
+                    bots_needed = nb_players - 1  # -1 for the student agent
+                    room.fill_with_bots(bots_needed)
                     
-                    # # Start the game
-                    # room.start_game()
+                    # Start the game
+                    room.start_game()
                     
                     # Wait for this room to finish before creating the next one
                     if room and room.game_thread:
                         room.game_thread.join()
                     
-                    logger.info(f"Completed run {run_index + 1}/{nb_runs_per_session} for {agent_name}")
+                    self.logger.info(f"Completed run {run_index + 1}/{nb_runs_per_session} for {agent_name}")
         
-        logger.info("Completed all evaluation runs")
+        self.logger.info("Completed all evaluation runs")
 
     def remove_room(self, room_id):
         """Remove a room from the server"""
         try:
             if room_id in self.rooms:
-                logger.info(f"Removing room {room_id}")
+                self.logger.debug(f"Removing room {room_id}")
                 room = self.rooms[room_id]
 
                 # 1. Signal the game to stop (if it exists and is running)
                 if hasattr(room, 'game') and room.game and room.game.running:
-                    logger.debug(f"Signaling game in room {room_id} to stop.")
+                    self.logger.debug(f"Signaling game in room {room_id} to stop.")
                     room.game.running = False
 
                 # 2. Signal the room's threads to stop
                 if room.running:
-                    logger.debug(f"Signaling room {room_id} threads to stop.")
+                    self.logger.debug(f"Signaling room {room_id} threads to stop.")
                     room.running = False
 
                 # 3. Wait for the game thread to finish if it's running
                 if room.game_thread and room.game_thread.is_alive():
-                    logger.info(
+                    self.logger.info(
                         f"Waiting for game thread in room {room_id} to terminate before removal"
                     )
                     room.game_thread.join(timeout=2.0)  # Wait a bit
                     if room.game_thread.is_alive():
-                        logger.warning(
+                        self.logger.warning(
                             f"Game thread for room {room_id} did not terminate gracefully."
                         )
 
@@ -954,7 +959,6 @@ class Server:
                 for ai_name, ai_client in list(self.rooms[room_id].ai_clients.items()):
                     # Check if ai_client.room exists before accessing id
                     if ai_client.room and ai_client.room.id == room_id:
-                        logger.debug(f"Stopping AI client {ai_name} in room {room_id}")
                         ai_client.stop()
                         ai_to_remove.append(ai_name)
 
@@ -967,18 +971,18 @@ class Server:
 
                 # 5. Now remove the room itself
                 del self.rooms[room_id]
-                logger.info(f"Room {room_id} removed successfully")
+                self.logger.debug(f"Room {room_id} removed successfully")
             else:
-                logger.warning(f"Attempted to remove non-existent room {room_id}")
+                self.logger.warning(f"Attempted to remove non-existent room {room_id}")
         except Exception as e:
-            logger.error(f"Error removing room {room_id}: {e}")
+            self.logger.error(f"Error removing room {room_id}: {e}")
 
     def run(self):
         """Main server loop"""
 
         def signal_handler(sig, frame):
             # Only set the running flag to false. Cleanup happens after the main loop.
-            logger.info("Shutdown signal received. Initiating graceful shutdown...")
+            self.logger.info("Shutdown signal received. Initiating graceful shutdown...")
             self.running = False
             # Removed direct cleanup and sys.exit from here
 
@@ -986,7 +990,7 @@ class Server:
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        logger.info("Server running. Press Ctrl+C to stop.")
+        self.logger.info("Server running. Press Ctrl+C to stop.")
 
         while self.running:
             # Main loop waits for running flag to become false
@@ -999,23 +1003,23 @@ class Server:
                 continue  # Check self.running again
 
         # --- Shutdown sequence starts here, after the loop ---
-        logger.info("Shutting down server...")
+        self.logger.info("Shutting down server...")
 
         # 1. Disconnect clients (must happen before closing the socket)
         client_addresses = list(self.addr_to_name.keys())  # Copy keys
         if client_addresses:
-            logger.info(f"Disconnecting {len(client_addresses)} clients...")
+            self.logger.info(f"Disconnecting {len(client_addresses)} clients...")
             for addr in client_addresses:
                 # try-except around send_disconnect in case socket is already bad
                 try:
-                    logger.debug(f"Disconnecting client {addr}")
+                    self.logger.debug(f"Disconnecting client {addr}")
                     self.send_disconnect(addr, "Server shutting down")
                     # Optional small delay to increase chance of message delivery
                     time.sleep(0.01)
                 except Exception as e:
-                    logger.error(f"Error sending disconnect to {addr}: {e}")
+                    self.logger.error(f"Error sending disconnect to {addr}: {e}")
         else:
-            logger.info("No clients connected to disconnect.")
+            self.logger.info("No clients connected to disconnect.")
 
         threads_to_join = []
         if hasattr(self, "threads"):  # Check if attribute exists
@@ -1031,18 +1035,18 @@ class Server:
         ]  # Check for None threads too
 
         if active_threads:
-            logger.info(f"Waiting for {len(active_threads)} threads to finish...")
+            self.logger.info(f"Waiting for {len(active_threads)} threads to finish...")
             for thread in active_threads:
                 try:
                     thread.join(timeout=1.0)  # Use timeout
                     if thread.is_alive():
-                        logger.warning(
+                        self.logger.warning(
                             f"Thread {thread.name} did not finish within timeout."
                         )
                 except Exception as e:
-                    logger.error(f"Error joining thread {thread.name}: {e}")
+                    self.logger.error(f"Error joining thread {thread.name}: {e}")
         else:
-            logger.info("No active threads found to join.")
+            self.logger.info("No active threads found to join.")
 
-        logger.info("Server shutdown complete")
+        self.logger.info("Server shutdown complete")
         # No sys.exit(0) here, allow the function to return naturally

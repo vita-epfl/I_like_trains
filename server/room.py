@@ -71,7 +71,7 @@ class Room:
             self.seed = self.config.seed
         self.random = random.Random(self.seed)
 
-        logger.info(f"Room {self.id} created with seed {self.seed}")
+        logger.debug(f"Room {self.id} created with seed {self.seed}")
 
         self.clients = {}  # {addr: nickname}
         self.client_game_modes = {}  # {addr: game_mode}
@@ -87,8 +87,6 @@ class Room:
         self.waiting_room_thread.start()
 
         self.tick_counter = 0  # Track the number of ticks since game start
-
-        self.has_clients = False  # Track if the room has at least one human player
 
         self.used_ai_names = set()  # Track AI names that are already in use
         self.ai_clients = {}  # Maps train names to AI clients
@@ -578,7 +576,7 @@ class Room:
                 ):  # Limit to TICK_RATE Hz
                     # Calculate remaining time before adding bots
                     remaining_time = 0
-                    if self.has_clients:
+                    if self.clients:
                         # Use the time the first client joined if available, otherwise creation time
                         start_time = (
                             self.first_client_join_time

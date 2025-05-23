@@ -14,7 +14,7 @@ logging.basicConfig(
     handlers=[logging.FileHandler("game_debug.log"), logging.StreamHandler()],
 )
 
-logger = logging.getLogger("server.train")
+server_logger = logging.getLogger("server.train")
 
 # INITIAL_SPEED controls when the train moves by default. The train moves every
 # tick_rate / self.speed. A larger initial speed means the train will move more
@@ -32,7 +32,7 @@ BOOST_INTENSITY = 3  # Intensity of speed boost
 
 class Train:
     def __init__(self, x, y, nickname, color, handle_train_death, tick_rate, reference_tick_rate):
-        logger.debug(f"Creating train {nickname} at position {x}, {y}")
+        server_logger.debug(f"Creating train {nickname} at position {x}, {y}")
         self.position = (x, y)
         self.wagons = []
         self.new_direction = Move.RIGHT.value
@@ -60,7 +60,6 @@ class Train:
             "alive": True,
             "boost_cooldown_active": True
         }
-        self.client_logger = logging.getLogger("client.train")
         # Speed boost properties
         self.speed_boost_active = False
         self.speed_boost_timer = 0
@@ -109,7 +108,7 @@ class Train:
             required_ticks = int((BOOST_COOLDOWN_DURATION + BOOST_DURATION) * self.reference_tick_rate)
             
             if ticks_elapsed >= required_ticks:
-                logger.debug(f"Resetting cooldown for train {self.nickname}")
+                server_logger.debug(f"Resetting cooldown for train {self.nickname}")
                 # Reset cooldown
                 self.boost_cooldown_active = False
                 self._dirty["boost_cooldown_active"] = True
@@ -158,7 +157,7 @@ class Train:
             and not self.speed_boost_active
             and len(self.wagons) > 0
         ):
-            logger.debug(f"Applying speed boost to train {self.nickname}")
+            server_logger.debug(f"Applying speed boost to train {self.nickname}")
             # Get the last wagon position
             last_wagon_pos = self.wagons[-1]
 
@@ -173,7 +172,7 @@ class Train:
             self.speed_boost_timer = BOOST_DURATION  # 1 second boost
 
             # Start cooldown
-            logger.debug(f"Starting cooldown for train {self.nickname}")
+            server_logger.debug(f"Starting cooldown for train {self.nickname}")
             self.boost_cooldown_active = True
             self.start_boost_cooldown_tick = self.current_tick
             self._dirty["boost_cooldown_active"] = True
@@ -187,7 +186,7 @@ class Train:
             ticks_elapsed = self.current_tick - self.start_boost_cooldown_tick
             return max(0, self.get_boost_cooldown_ticks() - ticks_elapsed)
         else:
-            logger.warning(f"Train {self.nickname} not found in train_boost_cooldown_ticks")
+            server_logger.warning(f"Train {self.nickname} not found in train_boost_cooldown_ticks")
             return 0
 
     def get_boost_cooldown_ticks(self):
@@ -206,7 +205,7 @@ class Train:
         if isinstance(self.position, tuple) and len(self.position) == 2:
             self.last_position = self.position
         else:
-            logger.warning(
+            server_logger.warning(
                 f"Invalid position for train {self.nickname} before move: {self.position}"
             )
             self.last_position = (0, 0)
@@ -254,7 +253,7 @@ class Train:
                 ):
                     valid_wagons.append(wagon)
                 else:
-                    logger.warning(
+                    server_logger.warning(
                         f"Invalid wagon found in to_dict for train {self.nickname}: {wagon}, skipping"
                     )
             data["wagons"] = valid_wagons
@@ -309,8 +308,7 @@ class Train:
                 collision_msg = (
                     f"Train {self.nickname} collided with its own wagon at {wagon_pos}"
                 )
-                logger.info(collision_msg)
-                self.client_logger.info(collision_msg)
+                server_logger.info(collision_msg)
                 death_reason = "self_collision"
                 self.handle_death([self.nickname], death_reason)
                 return True
@@ -324,8 +322,7 @@ class Train:
                 collision_msg = (
                     f"Train {self.nickname} collided with train {train.nickname}"
                 )
-                logger.info(collision_msg)
-                self.client_logger.info(collision_msg)
+                server_logger.info(collision_msg)
                 death_reason = "collision_with_train"
                 self.handle_death([self.nickname, train.nickname], death_reason)
                 return True
@@ -334,8 +331,7 @@ class Train:
             for wagon_pos in train.wagons:
                 if self.position == wagon_pos:
                     collision_msg = f"Train {self.nickname} collided with wagon of train {train.nickname}"
-                    logger.info(collision_msg)
-                    self.client_logger.info(collision_msg)
+                    server_logger.info(collision_msg)
                     death_reason = "collision_with_wagon"
                     self.handle_death([self.nickname], death_reason)
                     return True
@@ -347,7 +343,7 @@ class Train:
         x, y = new_position
         if x < 0 or x >= screen_width or y < 0 or y >= screen_height:
             self.handle_death([self.nickname], "out_of_bounds")
-            logger.debug(
+            server_logger.debug(
                 f"Train {self.nickname} is dead: out of the screen. Coordinates: {new_position}"
             )
             return True

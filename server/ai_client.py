@@ -10,9 +10,7 @@ import importlib
 import os
 import sys
 
-
 logger = logging.getLogger("server.ai_client")
-
 
 class AINetworkInterface:
     """
@@ -127,7 +125,7 @@ class AIClient:
         self.agent.delivery_zone = self.game.delivery_zone.to_dict()
 
         self.running = True
-        logger.info(f"AI client {nickname} started")
+        logger.debug(f"AI client {nickname} started")
 
     def update_state(self, state_data):
         """Update the state from the game"""
@@ -204,4 +202,5 @@ class AIClient:
 
     def stop(self):
         """Stop the AI client"""
+        logger.debug(f"Stopping AI client {self.nickname}")
         self.running = False
