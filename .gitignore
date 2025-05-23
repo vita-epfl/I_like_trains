@@ -5,8 +5,8 @@ venv
 server/config.txt
 *.json
 
-agents/staff_*
-bots/staff_*
+common/agents/staff_*
+common/agents/agents_to_evaluate/staff_*
 
 Dockerfile
 .dockerignore
