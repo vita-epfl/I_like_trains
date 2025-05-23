@@ -915,11 +915,14 @@ class Server:
                     
                     # Add the student agent to evaluate
                     student_nickname = f"Student_{agent_name}"
-                    room.add_ai(ai_nickname=student_nickname, ai_agent_file_name=agent_file)
+                    # Prefix the module with agents_to_evaluate.
+                    # Note: for Python imports, we use dots not slashes
+                    agent_file_path = f"agents_to_evaluate.{agent_file}"
+                    room.add_ai(ai_nickname=student_nickname, ai_agent_file_name=agent_file_path)
                     
                     # Use the existing fill_with_bots method to add bots to fill the room
-                    bots_needed = nb_players - 1  # -1 for the student agent
-                    room.fill_with_bots(bots_needed)
+                    # bots_needed = nb_players - 1  # -1 for the student agent
+                    # room.fill_with_bots(bots_needed)
                     
                     # Start the game
                     room.start_game()
