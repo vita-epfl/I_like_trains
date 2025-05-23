@@ -785,7 +785,7 @@ class Room:
             )
 
             self.ai_clients[ai_nickname] = AIClient(
-                self, ai_nickname, ai_agent_file_name, is_grading_mode=self.config.grading_mode
+                self, ai_nickname, ai_agent_file_name
             )
 
             # Add the ai_client to the game
@@ -858,7 +858,7 @@ class Room:
 
             # Create the AI client with the new name
             self.ai_clients[ai_nickname] = AIClient(
-                self, ai_nickname, ai_agent_file_name, is_dead, is_dead, is_grading_mode=self.config.grading_mode
+                self, ai_nickname, ai_agent_file_name, is_dead, is_dead
             )
 
             # Add the AI client to the game

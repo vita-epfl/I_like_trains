@@ -67,7 +67,7 @@ class AIClient:
     using the Agent class from the client
     """
 
-    def __init__(self, room, nickname, ai_agent_file_name=None, waiting_for_respawn=False, is_dead=False, is_grading_mode=False):
+    def __init__(self, room, nickname, ai_agent_file_name=None, waiting_for_respawn=False, is_dead=False):
         """Initialize the AI client
         
         Args:
