@@ -54,7 +54,8 @@ class BaseAgent:
             delivery_zone (list): List of delivery zones in the game
         """
         self.logger = logging.getLogger(logger)
-        self.logger.setLevel(logging.DEBUG)
+        if logger == "client.agent":
+            self.logger.setLevel(logging.DEBUG)
         self.nickname = nickname
         self.network = network
         # self.timeout = timeout
