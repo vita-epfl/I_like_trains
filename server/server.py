@@ -960,6 +960,10 @@ class Server:
         # Calculate total scores for each agent
         df['Total'] = df.sum(axis=1)
         
+        # Calculate ceiling (maximum possible points)
+        ceiling_total = sum(nb_players * nb_runs_per_session for nb_players in nb_players_per_session_list)
+        df['Ceiling'] = ceiling_total
+        
         # Save DataFrame to Excel
         df.to_excel(excel_path)
         self.logger.info(f"Saved grading results to {excel_path}")
