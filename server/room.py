@@ -55,6 +55,8 @@ class Room:
         addr_to_sciper,
         record_disconnection,
         tqdm_message=None,
+        grading_scores=None,
+        current_nb_players=None,
     ):
         self.config = config
         self.id = room_id
@@ -66,6 +68,8 @@ class Room:
         self.addr_to_sciper = addr_to_sciper
         self.record_disconnection = record_disconnection
         self.tqdm_message = tqdm_message
+        self.grading_scores = grading_scores
+        self.current_nb_players = current_nb_players
 
         # Initialize random seed if provided in config, otherwise generate one
         if self.config.seed is None:
@@ -342,8 +346,8 @@ class Room:
                 participant_id = nickname  # Use name as ID for bots
                 is_human = False
 
-            if participant_id:
-                participant_scores.append((participant_id, best_score, is_human))
+        if participant_id:
+            participant_scores.append((participant_id, best_score, is_human))
 
         # --- Record Bot vs Human Scores ---
         human_players = [(p_id, score) for p_id, score, is_human in participant_scores if is_human]
@@ -355,11 +359,58 @@ class Room:
                 for bot_id, bot_score in bot_players:
                     logger.debug(f"  Recording: Human {human_id} ({human_score}) vs Bot {bot_id} ({bot_score})")
                     stats_manager.record_bot_vs_human_score(human_id, bot_id, human_score, bot_score)
-        # -----------------------------------
+
+        # --- Update Excel scores for grading mode ---
+        if self.config.grading_mode and hasattr(self, 'student_nickname'):
+            # Get the sorted scores to determine rankings
+            sorted_scores = sorted([(nickname, score) for nickname, score in self.game.best_scores.items()], key=lambda x: x[1], reverse=True)
+            
+            # Find the student agent's position
+            student_position = None
+            for i, (nickname, score) in enumerate(sorted_scores):
+                if nickname == self.student_nickname:
+                    student_position = i
+                    break
+            
+            if student_position is not None:
+                # Calculate points based on position
+                nb_players = self.nb_players_max
+                points = 0
+                
+                if student_position == 0:  # First place
+                    points = nb_players
+                    logger.info(f"Agent {self.student_nickname} came in 1st place, earning {points} points")
+                elif student_position == 1:  # Second place
+                    points = nb_players / 2
+                    logger.info(f"Agent {self.student_nickname} came in 2nd place, earning {points} points")
+                elif student_position == 2:  # Third place
+                    points = nb_players / 4
+                    logger.info(f"Agent {self.student_nickname} came in 3rd place, earning {points} points")
+                else:
+                    logger.info(f"Agent {self.student_nickname} came in {student_position+1}th place, earning 0 points")
+                
+                # Extract agent name from student_nickname (remove 'Student_' prefix)
+                agent_name = self.student_nickname.replace('Student_', '')
+                
+                # Use grading_scores dictionary passed during room creation
+                if self.grading_scores is not None and agent_name in self.grading_scores:
+                    # Use current_nb_players passed during room creation or fallback to nb_players_max
+                    current_nb_players = self.current_nb_players if self.current_nb_players is not None else self.nb_players_max
+                    
+                    if current_nb_players in self.grading_scores[agent_name]:
+                        self.grading_scores[agent_name][current_nb_players] += points
+                        logger.info(f"Updated scores for {agent_name} with {current_nb_players} players: {self.grading_scores[agent_name][current_nb_players]}")
+                    else:
+                        logger.warning(f"Unable to update scores: {current_nb_players} not found in score dictionary for {agent_name}")
+                else:
+                    logger.warning(f"Unable to update scores: grading_scores is None or agent {agent_name} not in grading_scores")
+        elif hasattr(self, 'student_nickname'):
+            logger.info(f"Not in grading mode, skipping score update for {self.student_nickname}")
+        else:
+            logger.debug("No student agent in this room, skipping score update")
 
         # --- Stats: Record Game Results ---
-        if final_scores:
-            logger.debug(f"Recording game results for final scores: {final_scores}")
+        if final_scores and not self.config.grading_mode:
             winner_nickname = final_scores[0]["name"]
 
             # We only need the winner's nickname and whether they are AI for context
@@ -752,6 +803,10 @@ class Room:
         self.used_nicknames.add(ai_nickname)
 
         return ai_nickname
+
+    def add_student_ai(self, ai_nickname=None, ai_agent_file_name=None):
+        self.student_nickname = ai_nickname
+        self.add_ai(ai_nickname, ai_agent_file_name)
 
     def add_ai(self, ai_nickname=None, ai_agent_file_name=None):
         """Create an AI client to control a train"""

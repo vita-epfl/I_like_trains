@@ -1,5 +1,4 @@
 import os
-import sys
 import socket
 import json
 import threading
@@ -16,6 +15,8 @@ from server.room import Room
 from common.version import EXPECTED_CLIENT_VERSION
 from server.train import BOOST_COOLDOWN_DURATION
 
+import pandas as pd
+import datetime
 
 def setup_server_logger(is_grading_mode):
     # Create a handler for the console
@@ -182,6 +183,10 @@ class Server:
             self.logger.info(f"Randomly selected {nb_players_per_room} clients per room.")
         else:
             nb_players_per_room = int(nb_players_per_room)
+            
+        # Store current number of players for scoring in grading mode
+        if self.config.grading_mode:
+            self.current_nb_players = nb_players_per_room
 
         new_room = Room(
             self.config,
@@ -194,6 +199,8 @@ class Server:
             self.addr_to_sciper,
             self.record_disconnection,
             tqdm_message,
+            grading_scores=self.grading_scores if hasattr(self, 'grading_scores') else None,  # Pass just the scores dictionary
+            current_nb_players=nb_players_per_room  # Pass current number of players
         )
 
         self.rooms[room_id] = new_room
@@ -897,6 +904,24 @@ class Server:
         
         self.logger.info(f"Found {len(agent_files)} agent(s) to evaluate: {agent_files}")
         
+        # Create stats directory if it doesn't exist
+        stats_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "stats")
+        os.makedirs(stats_dir, exist_ok=True)
+        
+        # Create Excel file for storing scores with timestamp
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        excel_path = os.path.join(stats_dir, f"grading_results_{timestamp}.xlsx")
+        
+        # Initialize DataFrame with agent names as index
+        agent_names = [os.path.splitext(file)[0] for file in agent_files]
+        df = pd.DataFrame(index=agent_names)
+        
+        # Initialize scores dictionary to store points for each agent and player count
+        scores = {agent_name: {nb_players: 0 for nb_players in nb_players_per_session_list} for agent_name in agent_names}
+        
+        # Store reference to the scores in self for access from Room.end_game
+        self.grading_scores = scores
+        
         # For each agent to evaluate in the folder "agents"
         for agent_file in agent_files:
             agent_name = os.path.splitext(agent_file)[0]
@@ -918,11 +943,7 @@ class Server:
                     # Prefix the module with agents_to_evaluate.
                     # Note: for Python imports, we use dots not slashes
                     agent_file_path = f"agents_to_evaluate.{agent_file}"
-                    room.add_ai(ai_nickname=student_nickname, ai_agent_file_name=agent_file_path)
-                    
-                    # Use the existing fill_with_bots method to add bots to fill the room
-                    # bots_needed = nb_players - 1  # -1 for the student agent
-                    # room.fill_with_bots(bots_needed)
+                    room.add_student_ai(ai_nickname=student_nickname, ai_agent_file_name=agent_file_path)
                     
                     # Start the game
                     room.start_game()
@@ -930,7 +951,19 @@ class Server:
                     # Wait for this room to finish before creating the next one
                     if room and room.game_thread:
                         room.game_thread.join()
-                    
+        
+        # Convert scores to DataFrame and add a Total column
+        for agent_name in agent_names:
+            for nb_players in nb_players_per_session_list:
+                df.loc[agent_name, str(nb_players)] = scores[agent_name][nb_players]
+        
+        # Calculate total scores for each agent
+        df['Total'] = df.sum(axis=1)
+        
+        # Save DataFrame to Excel
+        df.to_excel(excel_path)
+        self.logger.info(f"Saved grading results to {excel_path}")
+        
         self.logger.info("Completed all evaluation runs")
 
     def remove_room(self, room_id):
