@@ -172,7 +172,7 @@ class Server:
 
         self.logger.info("All agent files verified successfully")
 
-    def create_room(self, running, nb_players_per_room, tqdm_message=None):
+    def create_room(self, running, nb_players_per_room, tqdm_message=None, current_run_index=None):
         """
         Create a new room with specified number of clients
         """
@@ -200,6 +200,8 @@ class Server:
             self.record_disconnection,
             tqdm_message,
             grading_scores=self.grading_scores if hasattr(self, 'grading_scores') else None,  # Pass just the scores dictionary
+            run_results=self.run_results if hasattr(self, 'run_results') else None,  # Pass just the run results list
+            current_run_index=current_run_index,  # Pass current run index
             current_nb_players=nb_players_per_room  # Pass current number of players
         )
 
@@ -910,7 +912,8 @@ class Server:
         
         # Create Excel file for storing scores with timestamp
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        excel_path = os.path.join(stats_dir, f"grading_results_{timestamp}.xlsx")
+        grades_excel_path = os.path.join(stats_dir, f"grading_results_{timestamp}.xlsx")
+        runs_excel_path = os.path.join(stats_dir, f"runs_{timestamp}.xlsx")
         
         # Initialize DataFrame with agent names as index
         agent_names = [os.path.splitext(file)[0] for file in agent_files]
@@ -922,6 +925,14 @@ class Server:
         # Store reference to the scores in self for access from Room.end_game
         self.grading_scores = scores
         
+        # Initialize run_results to store detailed results of each run
+        self.run_results = []
+        
+        # Create Excel file for runs with headers
+        runs_columns = ["run", "nb players", "student", "student score", "bot1", "score bot 1", "bot2", "score bot 2", "bot3", "score bot 3"]
+        runs_df = pd.DataFrame(columns=runs_columns)
+        runs_df.to_excel(runs_excel_path, index=False)
+
         # Start timing the evaluation process
         start_time = datetime.datetime.now()
         self.logger.info(f"Starting evaluation at {start_time}")
@@ -940,14 +951,14 @@ class Server:
                     tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players"
                     
                     # Create a room with the specified number of players
-                    room = self.create_room(True, nb_players, tqdm_message)
+                    room = self.create_room(True, nb_players, tqdm_message, run_index)
                     
                     # Add the student agent to evaluate
-                    student_nickname = f"Student_{agent_name}"
+                    # student_nickname = f"Student_{agent_name}"
                     # Prefix the module with agents_to_evaluate.
                     # Note: for Python imports, we use dots not slashes
                     agent_file_path = f"agents_to_evaluate.{agent_file}"
-                    room.add_student_ai(ai_nickname=student_nickname, ai_agent_file_name=agent_file_path)
+                    room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path)
                     
                     # Start the game
                     room.start_game()
@@ -969,8 +980,27 @@ class Server:
         df['Ceiling'] = ceiling_total
         
         # Save DataFrame to Excel
-        df.to_excel(excel_path)
-        self.logger.info(f"Saved grading results to {excel_path}")
+        df.to_excel(grades_excel_path)
+        self.logger.info(f"Saved grading results to {grades_excel_path}")
+        
+        # Save run results to Excel file
+        if self.run_results:
+            # Create a DataFrame from the run results
+            runs_df = pd.DataFrame(self.run_results)
+            
+            # Ensure all columns are present, even if empty
+            for col in runs_columns:
+                if col not in runs_df.columns:
+                    runs_df[col] = None
+            
+            # Reorganize columns according to the requested order
+            runs_df = runs_df[runs_columns]
+            
+            # Save to Excel file
+            runs_df.to_excel(runs_excel_path, index=False)
+            self.logger.info(f"Saved detailed run results to {runs_excel_path}")
+        else:
+            self.logger.warning("No run results collected to save to Excel")
         
         # Calculate and log the total execution time
         end_time = datetime.datetime.now()
