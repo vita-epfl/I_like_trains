@@ -1,5 +1,4 @@
 import os
-import sys
 import socket
 import json
 import threading
@@ -16,6 +15,8 @@ from server.room import Room
 from common.version import EXPECTED_CLIENT_VERSION
 from server.train import BOOST_COOLDOWN_DURATION
 
+import pandas as pd
+import datetime
 
 def setup_server_logger(is_grading_mode):
     # Create a handler for the console
@@ -171,7 +172,7 @@ class Server:
 
         self.logger.info("All agent files verified successfully")
 
-    def create_room(self, running, nb_players_per_room, tqdm_message=None):
+    def create_room(self, running, nb_players_per_room, tqdm_message=None, current_run_index=None):
         """
         Create a new room with specified number of clients
         """
@@ -182,6 +183,10 @@ class Server:
             self.logger.info(f"Randomly selected {nb_players_per_room} clients per room.")
         else:
             nb_players_per_room = int(nb_players_per_room)
+            
+        # Store current number of players for scoring in grading mode
+        if self.config.grading_mode:
+            self.current_nb_players = nb_players_per_room
 
         new_room = Room(
             self.config,
@@ -194,6 +199,10 @@ class Server:
             self.addr_to_sciper,
             self.record_disconnection,
             tqdm_message,
+            grading_scores=self.grading_scores if hasattr(self, 'grading_scores') else None,  # Pass just the scores dictionary
+            run_results=self.run_results if hasattr(self, 'run_results') else None,  # Pass just the run results list
+            current_run_index=current_run_index,  # Pass current run index
+            current_nb_players=nb_players_per_room  # Pass current number of players
         )
 
         self.rooms[room_id] = new_room
@@ -897,6 +906,37 @@ class Server:
         
         self.logger.info(f"Found {len(agent_files)} agent(s) to evaluate: {agent_files}")
         
+        # Create stats directory if it doesn't exist
+        stats_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "stats")
+        os.makedirs(stats_dir, exist_ok=True)
+        
+        # Create Excel file for storing scores with timestamp
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        grades_excel_path = os.path.join(stats_dir, f"grading_results_{timestamp}.xlsx")
+        runs_excel_path = os.path.join(stats_dir, f"runs_{timestamp}.xlsx")
+        
+        # Initialize DataFrame with agent names as index
+        agent_names = [os.path.splitext(file)[0] for file in agent_files]
+        df = pd.DataFrame(index=agent_names)
+        
+        # Initialize scores dictionary to store points for each agent and player count
+        scores = {agent_name: {nb_players: 0 for nb_players in nb_players_per_session_list} for agent_name in agent_names}
+        
+        # Store reference to the scores in self for access from Room.end_game
+        self.grading_scores = scores
+        
+        # Initialize run_results to store detailed results of each run
+        self.run_results = []
+        
+        # Create Excel file for runs with headers
+        runs_columns = ["run", "nb players", "student", "student score", "bot1", "score bot 1", "bot2", "score bot 2", "bot3", "score bot 3"]
+        runs_df = pd.DataFrame(columns=runs_columns)
+        runs_df.to_excel(runs_excel_path, index=False)
+
+        # Start timing the evaluation process
+        start_time = datetime.datetime.now()
+        self.logger.info(f"Starting evaluation at {start_time}")
+        
         # For each agent to evaluate in the folder "agents"
         for agent_file in agent_files:
             agent_name = os.path.splitext(agent_file)[0]
@@ -911,18 +951,14 @@ class Server:
                     tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players"
                     
                     # Create a room with the specified number of players
-                    room = self.create_room(True, nb_players, tqdm_message)
+                    room = self.create_room(True, nb_players, tqdm_message, run_index)
                     
                     # Add the student agent to evaluate
-                    student_nickname = f"Student_{agent_name}"
+                    # student_nickname = f"Student_{agent_name}"
                     # Prefix the module with agents_to_evaluate.
                     # Note: for Python imports, we use dots not slashes
                     agent_file_path = f"agents_to_evaluate.{agent_file}"
-                    room.add_ai(ai_nickname=student_nickname, ai_agent_file_name=agent_file_path)
-                    
-                    # Use the existing fill_with_bots method to add bots to fill the room
-                    # bots_needed = nb_players - 1  # -1 for the student agent
-                    # room.fill_with_bots(bots_needed)
+                    room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path)
                     
                     # Start the game
                     room.start_game()
@@ -930,7 +966,47 @@ class Server:
                     # Wait for this room to finish before creating the next one
                     if room and room.game_thread:
                         room.game_thread.join()
-                    
+        
+        # Convert scores to DataFrame and add a Total column
+        for agent_name in agent_names:
+            for nb_players in nb_players_per_session_list:
+                df.loc[agent_name, str(nb_players)] = scores[agent_name][nb_players]
+        
+        # Calculate total scores for each agent
+        df['Total'] = df.sum(axis=1)
+        
+        # Calculate ceiling (maximum possible points)
+        ceiling_total = sum(nb_players * nb_runs_per_session for nb_players in nb_players_per_session_list)
+        df['Ceiling'] = ceiling_total
+        
+        # Save DataFrame to Excel
+        df.to_excel(grades_excel_path)
+        self.logger.info(f"Saved grading results to {grades_excel_path}")
+        
+        # Save run results to Excel file
+        if self.run_results:
+            # Create a DataFrame from the run results
+            runs_df = pd.DataFrame(self.run_results)
+            
+            # Ensure all columns are present, even if empty
+            for col in runs_columns:
+                if col not in runs_df.columns:
+                    runs_df[col] = None
+            
+            # Reorganize columns according to the requested order
+            runs_df = runs_df[runs_columns]
+            
+            # Save to Excel file
+            runs_df.to_excel(runs_excel_path, index=False)
+            self.logger.info(f"Saved detailed run results to {runs_excel_path}")
+        else:
+            self.logger.warning("No run results collected to save to Excel")
+        
+        # Calculate and log the total execution time
+        end_time = datetime.datetime.now()
+        execution_time = end_time - start_time
+        self.logger.info(f"Total execution time: {execution_time}")
+        
         self.logger.info("Completed all evaluation runs")
 
     def remove_room(self, room_id):
