@@ -420,7 +420,7 @@ class Room:
                     
                     # Create a dictionary to store the run results
                     run_result = {
-                        "run": self.current_run_index,
+                        "run": self.current_run_index+1,
                         "nb players": self.nb_players_max,
                         "student": self.student_nickname,
                         "student score": student_score
