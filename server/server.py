@@ -890,9 +890,10 @@ class Server:
         # Get the configuration parameters for grading mode
         nb_players_per_session_list = self.config.grading_mode_args.nb_players_per_session
         nb_runs_per_session = self.config.grading_mode_args.nb_runs_per_session
+        path_to_agents = self.config.grading_mode_args.path_to_agents
         
         # Get the path to the agents to evaluate folder
-        agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "common", "agents", "agents_to_evaluate")
+        agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), path_to_agents)
         self.logger.info(f"Looking for agents to evaluate in: {agents_dir}")
         
         # Find all Python files in the agents folder that don't have .template extension

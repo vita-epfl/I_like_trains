@@ -7,6 +7,7 @@ from common.agent_config import AgentConfig
 class GradingModeArgs(BaseModel):
     nb_players_per_session: List[int] = [1, 2, 3, 4]
     nb_runs_per_session: int = 50
+    path_to_agents: str = "common/agents/agents_to_evaluate"
 
 
 class ServerConfig(BaseModel):
@@ -52,7 +53,8 @@ class ServerConfig(BaseModel):
     # The configuration from JSON: 
     # "grading_mode_args": {
     #         "nb_players_per_session": [1, 2, 3, 4],
-    #         "nb_runs_per_session": 50
+    #         "nb_runs_per_session": 50,
+    #         "path_to_agents": "common/agents/agents_to_evaluate"
     #     }
     # is properly recognized by this model
     grading_mode_args: Optional[GradingModeArgs] = None
