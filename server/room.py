@@ -318,6 +318,7 @@ class Room:
         logger.debug(f"Best scores: {self.game.best_scores}")
 
         participant_scores = []  # List of tuples: (id, score, is_human)
+        participant_id = None  # Initialize participant_id to avoid UnboundLocalError
         for nickname, best_score in self.game.best_scores.items():
             logger.debug(f"Train {nickname} has best score {best_score}")
 
