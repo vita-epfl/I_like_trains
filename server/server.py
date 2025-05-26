@@ -890,10 +890,10 @@ class Server:
         # Get the configuration parameters for grading mode
         nb_players_per_session_list = self.config.grading_mode_args.nb_players_per_session
         nb_runs_per_session = self.config.grading_mode_args.nb_runs_per_session
-        path_to_agents = self.config.grading_mode_args.path_to_agents
+        agents_dir = self.config.grading_mode_args.agents_dir
         
         # Get the path to the agents to evaluate folder
-        agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), path_to_agents)
+        agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "common", "agents", agents_dir)
         self.logger.info(f"Looking for agents to evaluate in: {agents_dir}")
         
         # Find all Python files in the agents folder that don't have .template extension
@@ -968,7 +968,7 @@ class Server:
                     # student_nickname = f"Student_{agent_name}"
                     # Prefix the module with agents_to_evaluate.
                     # Note: for Python imports, we use dots not slashes
-                    agent_file_path = f"agents_to_evaluate.{agent_file}"
+                    agent_file_path = f"{self.config.grading_mode_args.agents_dir}.{agent_file}"
                     room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path)
                     
                     # Start the game
