@@ -36,7 +36,7 @@ def setup_server_logger(is_grading_mode):
     if is_grading_mode:
         server_logger.setLevel(logging.INFO)
         modules = {
-        "server.room": logging.CRITICAL,
+        "server.room": logging.CRITICAL, # INFO to get information about the run completion and results
         "server.game": logging.CRITICAL,
         "server.train": logging.CRITICAL,
         "server.passenger": logging.CRITICAL,
@@ -172,7 +172,7 @@ class Server:
 
         self.logger.info("All agent files verified successfully")
 
-    def create_room(self, running, nb_players_per_room, tqdm_message=None, current_run_index=None):
+    def create_room(self, running, nb_players_per_room, tqdm_message=None, current_run_index=None, bot_seed=None):
         """
         Create a new room with specified number of clients
         """
@@ -202,7 +202,8 @@ class Server:
             grading_scores=self.grading_scores if hasattr(self, 'grading_scores') else None,  # Pass just the scores dictionary
             run_results=self.run_results if hasattr(self, 'run_results') else None,  # Pass just the run results list
             current_run_index=current_run_index,  # Pass current run index
-            current_nb_players=nb_players_per_room  # Pass current number of players
+            current_nb_players=nb_players_per_room,  # Pass current number of players
+            bot_seed=bot_seed,
         )
 
         self.rooms[room_id] = new_room
@@ -905,6 +906,13 @@ class Server:
             return
         
         self.logger.info(f"Found {len(agent_files)} agent(s) to evaluate: {agent_files}")
+
+        # Générer les seeds pour chaque run_index avant de commencer l'évaluation
+        # Ainsi, pour un même run_index, on aura toujours le même seed, peu importe l'agent ou nb_players
+        run_seeds = {}
+        for run_index in range(nb_runs_per_session):
+            run_seeds[run_index] = random.randint(1, 1000000)
+            self.logger.debug(f"Generated seed for run_index {run_index}: {run_seeds[run_index]}")
         
         # Create stats directory if it doesn't exist
         stats_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "stats")
@@ -944,14 +952,16 @@ class Server:
             
             # For each 'nb_players_per_session'
             for nb_players in nb_players_per_session_list:
-                self.logger.info(f"Running evaluation with {nb_players} players per session")
+                self.logger.debug(f"Running evaluation with {nb_players} players per session")
                 
                 # For 'nb_runs_per_session' times
                 for run_index in range(nb_runs_per_session):
-                    tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players"
+                    # Récupérer le seed correspondant au run_index actuel
+                    current_seed = run_seeds[run_index]
+                    tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players (seed: {current_seed})"
                     
                     # Create a room with the specified number of players
-                    room = self.create_room(True, nb_players, tqdm_message, run_index)
+                    room = self.create_room(True, nb_players, tqdm_message, run_index, current_seed)
                     
                     # Add the student agent to evaluate
                     # student_nickname = f"Student_{agent_name}"
@@ -964,7 +974,7 @@ class Server:
                     room.start_game()
                     
                     # Wait for this room to finish before creating the next one
-                    if room and room.game_thread:
+                    if room and room.game_thread and room.game_thread.is_alive():
                         room.game_thread.join()
         
         # Convert scores to DataFrame and add a Total column
