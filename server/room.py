@@ -318,6 +318,7 @@ class Room:
         logger.debug(f"Best scores: {self.game.best_scores}")
 
         participant_scores = []  # List of tuples: (id, score, is_human)
+        participant_id = None  # Initialize participant_id to avoid UnboundLocalError
         for nickname, best_score in self.game.best_scores.items():
             logger.debug(f"Train {nickname} has best score {best_score}")
 
@@ -408,39 +409,41 @@ class Room:
                         logger.info(f"Updated scores for {agent_name} with {current_nb_players} players: {self.grading_scores[agent_name][current_nb_players]}")
                     else:
                         logger.warning(f"Unable to update scores: {current_nb_players} not found in score dictionary for {agent_name}")
-                
-                # --- Store run results for Excel file ---
-                if self.run_results is not None:
-                    # Get student score
-                    student_score = 0
-                    for nickname, score in sorted_scores:
-                        if nickname == self.student_nickname:
-                            student_score = score
-                            break
-                    
-                    # Create a dictionary to store the run results
-                    run_result = {
-                        "run": self.current_run_index+1,
-                        "nb players": self.nb_players_max,
-                        "student": self.student_nickname,
-                        "student score": student_score
-                    }
-                    
-                    # Add bot scores
-                    bot_index = 1
-                    for nickname, score in sorted_scores:
-                        if nickname != self.student_nickname and bot_index <= 3:
-                            run_result[f"bot{bot_index}"] = nickname
-                            run_result[f"score bot {bot_index}"] = score
-                            bot_index += 1
-                    
-                    # Add the run result to the list
-                    self.run_results.append(run_result)
-                    logger.info(f"Stored run results for {self.student_nickname}: {run_result}")
-                else:
-                    logger.warning("No run_results list found in the room object")
             else:
-                logger.warning(f"Unable to update scores: grading_scores is None or agent {agent_name} not in grading_scores")
+                logger.warning("Student position is None")
+                # Set student score to 0
+                
+            # --- Store run results for Excel file ---
+            if self.run_results is not None:
+                # Get student score
+                student_score = 0
+                for nickname, score in sorted_scores:
+                    if nickname == self.student_nickname:
+                        student_score = score
+                        break
+                
+                # Create a dictionary to store the run results
+                run_result = {
+                    "run": self.current_run_index+1,
+                    "nb players": self.nb_players_max,
+                    "student": self.student_nickname,
+                    "student score": student_score
+                }
+                
+                # Add bot scores
+                bot_index = 1
+                for nickname, score in sorted_scores:
+                    if nickname != self.student_nickname and bot_index <= 3:
+                        run_result[f"bot{bot_index}"] = nickname
+                        run_result[f"score bot {bot_index}"] = score
+                        bot_index += 1
+                
+                # Add the run result to the list
+                self.run_results.append(run_result)
+                logger.info(f"Stored run results for {self.student_nickname}: {run_result}")
+            else:
+                logger.warning("No run_results list found in the room object")
+
         elif hasattr(self, 'student_nickname'):
             logger.info(f"Not in grading mode, skipping score update for {self.student_nickname}")
         else:
