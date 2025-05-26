@@ -7,8 +7,6 @@ import logging
 import json
 from server.passenger import Passenger
 import importlib
-import os
-import sys
 
 logger = logging.getLogger("server.ai_client")
 
@@ -95,10 +93,13 @@ class AIClient:
         # Initialize agent if path_to_agent is provided
         try:
             logger.info(f"Trying to import AI agent for {nickname}")
+            # Check if module_path is defined
             if ai_agent_file_name.endswith(".py"):
                 # Remove .py extension
                 ai_agent_file_name = ai_agent_file_name[:-3]
-                module_path = f"common.agents.{ai_agent_file_name}"
+            
+            # The module path must include agents_to_evaluate
+            module_path = f"common.agents.agents_to_evaluate.{ai_agent_file_name}"
             logger.info(f"Importing module: {module_path}")
 
             module = importlib.import_module(module_path)

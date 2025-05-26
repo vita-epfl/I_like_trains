@@ -18,6 +18,109 @@ from server.train import BOOST_COOLDOWN_DURATION
 import pandas as pd
 import datetime
 
+
+# Cette fonction doit être définie au niveau du module pour pouvoir être sérialisée par multiprocessing
+def evaluate_agent_task(task):
+    """Fonction d'évaluation d'un agent pour multiprocessing"""
+    # Unpack the task parameters
+    agent_file, nb_players, run_index, current_seed, nb_runs_per_session, agents_dir, config_path = task
+    
+    # Import necessary modules at the beginning of the function
+    import sys
+    import os
+    import uuid
+    import socket
+    import logging
+    
+    agent_name = os.path.splitext(agent_file)[0]
+    tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players (seed: {current_seed})"
+    
+    # Import the config module
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    sys.path.append(parent_dir)
+    
+    from common.config import Config
+    from server.room import Room
+    
+    # Setup a logger for this process
+    logger = logging.getLogger(f"server.worker.{agent_name}.{nb_players}.{run_index}")
+    logger.setLevel(logging.INFO)
+    
+    # Load configuration from the same file as the main process
+    config = Config.load(config_path)  # Utilisation de la méthode statique load() au lieu du constructeur
+    config.server.grading_mode = True
+    config.server.waiting_time_before_bots_seconds = 0
+    config.server.tick_rate = 1000
+    
+    # S'assurer que grading_mode_args existe
+    if not hasattr(config.server, 'grading_mode_args') or config.server.grading_mode_args is None:
+        # Créer une structure minimale pour le processus enfant
+        from common.server_config import GradingModeArgs
+        config.server.grading_mode_args = GradingModeArgs()
+    
+    # Maintenant on peut définir agents_dir en toute sécurité
+    config.server.grading_mode_args.agents_dir = agents_dir
+    
+    # Create a unique room ID
+    room_id = str(uuid.uuid4())[:8]
+    
+    # Setup a dummy server socket (won't be used for actual networking in worker process)
+    dummy_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
+    # Create room callbacks (dummies for worker process)
+    def dummy_send_cooldown_notification(nickname, cooldown, death_reason):
+        pass
+        
+    def dummy_remove_room(room_id):
+        pass
+        
+    def dummy_record_disconnection(sciper, reason):
+        pass
+    
+    # Create a room with the specified number of players
+    room = Room(
+        config.server,
+        room_id,
+        nb_players,
+        True,  # running
+        dummy_socket,
+        dummy_send_cooldown_notification,
+        dummy_remove_room,
+        {},  # addr_to_sciper
+        dummy_record_disconnection,
+        tqdm_message,
+        grading_scores=None,  # Will handle scores separately
+        run_results=None,  # Will handle run_results separately
+        current_run_index=run_index,
+        current_nb_players=nb_players,
+        bot_seed=current_seed,
+    )
+    
+    # Add the student agent to evaluate
+    # agents_dir est le nom du répertoire (ex: "agents_to_evaluate")
+    # Pour l'importation, nous avons besoin du format "common.agents.agents_to_evaluate.agent_name"
+    agent_file_path = agent_file  # On utilise le nom du fichier complet avec l'extension .py
+    room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path)
+    
+    # Start the game
+    room.start_game()
+    
+    # Wait for this room to finish
+    if room and room.game_thread and room.game_thread.is_alive():
+        room.game_thread.join()
+    
+    # Extract results from the room
+    result = {
+        'agent_name': agent_name,
+        'nb_players': nb_players,
+        'run_index': run_index,
+        'score': room.student_score if hasattr(room, 'student_score') else 0,
+        'run_data': room.run_data if hasattr(room, 'run_data') else None
+    }
+    
+    return result
+
 def setup_server_logger(is_grading_mode):
     # Create a handler for the console
     console_handler = logging.StreamHandler()
@@ -884,8 +987,8 @@ class Server:
                 self.logger.error(f"Error calling stats_manager.record_disconnection for {sciper}: {e}")
 
     def run_grading_mode(self):
-        """Run evaluation for all agents in the agents folder"""
-        self.logger.info("Server started in grading mode")
+        """Run evaluation for all agents in the agents folder using multiprocessing"""
+        self.logger.info("Server started in grading mode with multiprocessing")
 
         # Get the configuration parameters for grading mode
         nb_players_per_session_list = self.config.grading_mode_args.nb_players_per_session
@@ -908,8 +1011,8 @@ class Server:
         
         self.logger.info(f"Found {len(agent_files)} agent(s) to evaluate: {agent_files}")
 
-        # Générer les seeds pour chaque run_index avant de commencer l'évaluation
-        # Ainsi, pour un même run_index, on aura toujours le même seed, peu importe l'agent ou nb_players
+        # Generate seeds for each run_index before starting evaluation
+        # So for the same run_index, we'll always have the same seed, regardless of agent or nb_players
         run_seeds = {}
         for run_index in range(nb_runs_per_session):
             run_seeds[run_index] = random.randint(1, 1000000)
@@ -946,37 +1049,58 @@ class Server:
         start_time = datetime.datetime.now()
         self.logger.info(f"Starting evaluation at {start_time}")
         
-        # For each agent to evaluate in the folder "agents"
-        for agent_file in agent_files:
-            agent_name = os.path.splitext(agent_file)[0]
-            self.logger.info(f"Evaluating agent: {agent_name}")
+        # Obtenir le chemin du fichier de configuration s'il existe
+        config_path = None
+        if hasattr(self.config, '_config_path') and self.config._config_path:
+            config_path = self.config._config_path
+        else:
+            # Si pas de chemin explicite, utiliser le fichier par défaut
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
             
-            # For each 'nb_players_per_session'
+        self.logger.info(f"Using configuration file: {config_path}")
+            
+        # Create tasks for all evaluations
+        tasks = []
+        for agent_file in agent_files:
             for nb_players in nb_players_per_session_list:
-                self.logger.debug(f"Running evaluation with {nb_players} players per session")
-                
-                # For 'nb_runs_per_session' times
                 for run_index in range(nb_runs_per_session):
-                    # Récupérer le seed correspondant au run_index actuel
                     current_seed = run_seeds[run_index]
-                    tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players (seed: {current_seed})"
-                    
-                    # Create a room with the specified number of players
-                    room = self.create_room(True, nb_players, tqdm_message, run_index, current_seed)
-                    
-                    # Add the student agent to evaluate
-                    # student_nickname = f"Student_{agent_name}"
-                    # Prefix the module with agents_to_evaluate.
-                    # Note: for Python imports, we use dots not slashes
-                    agent_file_path = f"{self.config.grading_mode_args.agents_dir}.{agent_file}"
-                    room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path)
-                    
-                    # Start the game
-                    room.start_game()
-                    
-                    # Wait for this room to finish before creating the next one
-                    if room and room.game_thread and room.game_thread.is_alive():
-                        room.game_thread.join()
+                    # Inclure l'information sur le nombre total de runs, le répertoire des agents et le chemin de configuration
+                    tasks.append((agent_file, nb_players, run_index, current_seed, nb_runs_per_session, self.config.grading_mode_args.agents_dir, config_path))
+        
+        # Configure multiprocessing to use spawn method
+        import multiprocessing
+        try:
+            multiprocessing.set_start_method('spawn', force=True)
+        except RuntimeError:
+            self.logger.warning("Spawn method already set or not available, continuing with current method")
+        
+        # Import tqdm here to ensure it's available in the main process
+        from tqdm import tqdm
+        
+        # Use a Pool to run evaluations in parallel
+        worker_count = min(multiprocessing.cpu_count(), len(tasks))
+        self.logger.info(f"Starting multiprocessing pool with {worker_count} workers")
+        
+        # Process all tasks and collect results
+        results = []
+        with multiprocessing.Pool(processes=worker_count) as pool:
+            # Run all evaluations and collect results
+            for result in tqdm(pool.imap_unordered(evaluate_agent_task, tasks), total=len(tasks), desc="Evaluating agents"):
+                # Process each result as it completes
+                agent_name = result['agent_name']
+                nb_players = result['nb_players']
+                
+                # Update scores
+                if result['score'] > 0:
+                    scores[agent_name][nb_players] += result['score']
+                
+                # Update run_results if run_data is available
+                if result['run_data']:
+                    self.run_results.append(result['run_data'])
+                
+                # Add to results list
+                results.append(result)
         
         # Convert scores to DataFrame and add a Total column
         for agent_name in agent_names:
