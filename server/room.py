@@ -5,6 +5,8 @@ import threading
 import time
 from tqdm import tqdm
 
+import os
+
 from common.server_config import ServerConfig
 from common import stats_manager
 from common.constants import REFERENCE_TICK_RATE
@@ -847,11 +849,11 @@ class Room:
 
         return ai_nickname
 
-    def add_student_ai(self, ai_nickname=None, ai_agent_file_name=None):
+    def add_student_ai(self, ai_nickname=None, ai_agent_file_name=None, agent_dir="common.agents_to_evaluate"):
         self.student_nickname = ai_nickname
-        self.add_ai(ai_nickname, ai_agent_file_name)
+        self.add_ai(ai_nickname, ai_agent_file_name, agent_dir)
 
-    def add_ai(self, ai_nickname=None, ai_agent_file_name=None):
+    def add_ai(self, ai_nickname=None, ai_agent_file_name=None, agent_dir="common.agents"):
         """Create an AI client to control a train"""
 
         # Creating a new AI train (not replacing an existing one)
@@ -865,7 +867,7 @@ class Room:
             )
 
             self.ai_clients[ai_nickname] = AIClient(
-                self, ai_nickname, ai_agent_file_name
+                self, ai_nickname, ai_agent_file_name=ai_agent_file_name, agent_dir=agent_dir
             )
 
             # Add the ai_client to the game
@@ -935,10 +937,12 @@ class Room:
                         logger.error(
                             f"Error sending train rename notification to client {client_addr}: {e}"
                         )
+            # link to common/agents/
+            agent_dir = "common.agents"
 
             # Create the AI client with the new name
             self.ai_clients[ai_nickname] = AIClient(
-                self, ai_nickname, ai_agent_file_name, is_dead, is_dead
+                self, ai_nickname, ai_agent_file_name, is_dead, is_dead, agent_dir
             )
 
             # Add the AI client to the game

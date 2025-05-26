@@ -65,7 +65,7 @@ class AIClient:
     using the Agent class from the client
     """
 
-    def __init__(self, room, nickname, ai_agent_file_name=None, waiting_for_respawn=False, is_dead=False):
+    def __init__(self, room, nickname, ai_agent_file_name=None, waiting_for_respawn=False, is_dead=False, agent_dir=None):
         """Initialize the AI client
         
         Args:
@@ -74,6 +74,7 @@ class AIClient:
             ai_agent_file_name: The filename of the agent implementation
             waiting_for_respawn: Whether the AI is waiting for respawn
             is_dead: Whether the AI is dead
+            agent_dir: The directory of the agent implementation
         """
         logger.debug(f"Initializing AI client {nickname}, waiting_for_respawn: {waiting_for_respawn}, is_dead: {is_dead}")
         self.room = room
@@ -97,12 +98,8 @@ class AIClient:
             if ai_agent_file_name.endswith(".py"):
                 # Remove .py extension
                 ai_agent_file_name = ai_agent_file_name[:-3]
-            
-            # The module path must include agents_to_evaluate
-            module_path = f"common.agents.agents_to_evaluate.{ai_agent_file_name}"
-            logger.info(f"Importing module: {module_path}")
 
-            module = importlib.import_module(module_path)
+            module = importlib.import_module(agent_dir + "." + ai_agent_file_name)
             self.agent = module.Agent(nickname, self.network, logger="server.ai_agent", timeout=1 / self.room.config.tick_rate)
             logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name}")
 

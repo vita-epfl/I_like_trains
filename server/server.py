@@ -53,15 +53,6 @@ def evaluate_agent_task(task):
     config.server.waiting_time_before_bots_seconds = 0
     config.server.tick_rate = 1000
     
-    # S'assurer que grading_mode_args existe
-    if not hasattr(config.server, 'grading_mode_args') or config.server.grading_mode_args is None:
-        # Créer une structure minimale pour le processus enfant
-        from common.server_config import GradingModeArgs
-        config.server.grading_mode_args = GradingModeArgs()
-    
-    # Maintenant on peut définir agents_dir en toute sécurité
-    config.server.grading_mode_args.agents_dir = agents_dir
-    
     # Create a unique room ID
     room_id = str(uuid.uuid4())[:8]
     
@@ -97,11 +88,11 @@ def evaluate_agent_task(task):
         bot_seed=current_seed,
     )
     
-    # Add the student agent to evaluate
-    # agents_dir est le nom du répertoire (ex: "agents_to_evaluate")
-    # Pour l'importation, nous avons besoin du format "common.agents.agents_to_evaluate.agent_name"
     agent_file_path = agent_file  # On utilise le nom du fichier complet avec l'extension .py
-    room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path)
+    
+    # Préfixer avec "common.agents." pour avoir le bon format de module Python
+    module_path = f"common.agents.{agents_dir}"
+    room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path, agent_dir=module_path)
     
     # Start the game
     room.start_game()
@@ -997,6 +988,7 @@ class Server:
         
         # Get the path to the agents to evaluate folder
         agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "common", "agents", agents_dir)
+        agents_dir = os.path.normpath(agents_dir)  # Normaliser le chemin pour éviter les problèmes de séparateurs
         self.logger.info(f"Looking for agents to evaluate in: {agents_dir}")
         
         # Find all Python files in the agents folder that don't have .template extension
