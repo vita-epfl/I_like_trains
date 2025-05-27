@@ -16,7 +16,7 @@ from server.ai_client import AIClient
 
 # Configure logger
 logger = logging.getLogger("server.room")
-logger.setLevel(logging.DEBUG)
+# Log level will be set by the server.py setup_server_logger function
 
 # List of names for AI-controlled clients
 AI_NAMES = [

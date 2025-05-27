@@ -21,7 +21,7 @@ import datetime
 
 # Cette fonction doit être définie au niveau du module pour pouvoir être sérialisée par multiprocessing
 def evaluate_agent_task(task):
-    """Fonction d'évaluation d'un agent pour multiprocessing"""
+    """Fonction d'évaluation d'un agent pour multiprocessing"""    
     # Get parameters from the task dictionary
     agent_file = task['agent_file']
     nb_players = task['nb_players']
@@ -50,6 +50,36 @@ def evaluate_agent_task(task):
     # Setup a logger for this process
     logger = logging.getLogger(f"server.worker.{agent_name}.{nb_players}.{run_index}")
     logger.setLevel(logging.INFO)
+    
+    # Configuration des logs pour ce processus d'évaluation
+    # Reset all logging
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    
+    # Create a console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+    
+    # Create a formatter
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    console_handler.setFormatter(formatter)
+    
+    # Configure the root logger
+    logging.root.setLevel(logging.DEBUG)
+    logging.root.addHandler(console_handler)
+    
+    # Configure les loggers de serveur pour les mettre en CRITICAL (grading mode)
+    modules = [
+        "server.room", "server.game", "server.train", "server.passenger",
+        "server.delivery_zone", "server.ai_client", "server.ai_agent"
+    ]
+    
+    # Configure chaque logger de module avec le niveau CRITICAL
+    for module in modules:
+        module_logger = logging.getLogger(module)
+        module_logger.setLevel(logging.CRITICAL)
     
     # Use the configuration transmise depuis le processus principal
     try:
@@ -142,59 +172,64 @@ def evaluate_agent_task(task):
     
     return result
 
+# Configuration simplifiée sans classe de filtrage
+
 def setup_server_logger(is_grading_mode):
-    # Create a handler for the console
+    # Reset all logging
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    
+    # Create a console handler
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
 
-    # Define the format
+    # Create a formatter
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     console_handler.setFormatter(formatter)
-
-    # Configure the main server logger
+    
+    # Configure the root logger
+    logging.root.setLevel(logging.DEBUG)  # Allow all messages through root
+    logging.root.addHandler(console_handler)
+    
+    # Configure server logger
     server_logger = logging.getLogger("server")
+    server_logger.setLevel(logging.INFO if is_grading_mode else logging.DEBUG)
     
-    # If in grading mode, set all modules to CRITICAL except server which should be INFO
-    if is_grading_mode:
-        server_logger.setLevel(logging.INFO)
-        modules = {
-        "server.room": logging.CRITICAL, # INFO to get information about the run completion and results
-        "server.game": logging.CRITICAL,
-        "server.train": logging.CRITICAL,
-        "server.passenger": logging.CRITICAL,
-        "server.delivery_zone": logging.CRITICAL,
-        "server.ai_client": logging.CRITICAL,
-        "server.ai_agent": logging.CRITICAL,
+    # Define module log levels and apply them directly
+    modules = {
+        "server.room": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.game": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.train": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.passenger": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.delivery_zone": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.ai_client": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.ai_agent": logging.CRITICAL if is_grading_mode else logging.DEBUG,
     }
-    else:
-        server_logger.setLevel(logging.DEBUG)
-        # Configure the loggers of the sub-modules with default levels
-        modules = {
-            "server.room": logging.DEBUG,
-            "server.game": logging.DEBUG,
-            "server.train": logging.DEBUG,
-            "server.passenger": logging.DEBUG,
-            "server.delivery_zone": logging.DEBUG,
-            "server.ai_client": logging.DEBUG,
-            "server.ai_agent": logging.DEBUG,
-        }
 
-    # log the levels of the modules
-    server_logger.debug("Modules levels:")
-    for module, level in modules.items():
-        server_logger.debug(f"{module}: {level}")
-    
-    server_logger.propagate = False
-    server_logger.addHandler(console_handler)
-    
-    # Configure each module logger with its specified level
+    # Configure each module logger with the appropriate level
     for module, level in modules.items():
         logger = logging.getLogger(module)
         logger.setLevel(level)
-        logger.propagate = False
-        logger.addHandler(console_handler)
+    
+    # Only log the logger configuration in non-grading mode
+    if not is_grading_mode:
+        server_logger.debug("Setting up logging with filter-based approach")
+        server_logger.debug(f"Grading mode: {is_grading_mode}")
+    
+    # For each module, configure it to use our common handler
+    for module, level in modules.items():
+        logger = logging.getLogger(module)
+        # Don't need to set handlers or level - the filter will control what gets through
+        logger.propagate = True  # Let messages propagate to root logger with our filter
+    
+    # Print confirmation in non-grading mode
+    if not is_grading_mode:
+        server_logger.debug("Logging setup complete.")
+        for module, level in modules.items():
+            server_logger.debug(f"{module}: {'CRITICAL' if is_grading_mode else 'DEBUG'}")
+
 
     return server_logger
 
@@ -204,6 +239,9 @@ class Server:
         self.config = config.server
 
         self.logger = setup_server_logger(self.config.grading_mode)
+
+        # log self.config
+        self.logger.debug(f"Config: {self.config}")
 
         # if grading mode, set waiting_time_before_bots_seconds to 0
         if self.config.grading_mode:
