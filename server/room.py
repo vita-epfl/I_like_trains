@@ -808,6 +808,11 @@ class Room:
 
         logger.debug(f"Adding {nb_bots_needed} bots to room {self.id} (seed: {self.bot_seed})")
 
+        # Check if agents list exists and is not empty
+        if not hasattr(self.config, 'agents') or not self.config.agents:
+            logger.error(f"No agents defined in config, cannot add bots to room {self.id}")
+            return
+            
         # If we need less bots or an equal number to the available list, we pick the bots
         # randomly (without repetition).
         # If we need more, we pick each one at least once.

@@ -48,10 +48,28 @@ def evaluate_agent_task(task):
     logger.setLevel(logging.INFO)
     
     # Load configuration from the same file as the main process
-    config = Config.load(config_path)  # Utilisation de la méthode statique load() au lieu du constructeur
-    config.server.grading_mode = True
-    config.server.waiting_time_before_bots_seconds = 0
-    config.server.tick_rate = 1000
+    try:
+        # Ensure the config_path is absolute
+        if not os.path.isabs(config_path):
+            config_path = os.path.abspath(config_path)
+        
+        # Verify if file exists
+        if not os.path.exists(config_path):
+            logger.warning(f"Configuration file {config_path} not found, using default config.json")
+            config_path = os.path.join(parent_dir, "config.json")
+        
+        logger.info(f"Loading configuration from {config_path}")
+        config = Config.load(config_path)  # Utilisation de la méthode statique load() au lieu du constructeur
+        config.server.grading_mode = True
+        config.server.waiting_time_before_bots_seconds = 0
+        config.server.tick_rate = 1000
+        
+        # Verify if agents list exists and is not empty
+        if not hasattr(config.server, 'agents') or not config.server.agents:
+            logger.warning(f"No agents found in config, this will cause errors in Room.fill_with_bots")
+    except Exception as e:
+        logger.error(f"Error loading configuration: {e}")
+        raise
     
     # Create a unique room ID
     room_id = str(uuid.uuid4())[:8]
