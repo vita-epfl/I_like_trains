@@ -51,22 +51,20 @@ def evaluate_agent_task(task):
     logger = logging.getLogger(f"server.worker.{agent_name}.{nb_players}.{run_index}")
     logger.setLevel(logging.INFO)
     
-    # Utiliser la configuration transmise depuis le processus principal
+    # Use the configuration transmise depuis le processus principal
     try:
-        # Récupérer la config depuis task
+        # Get the config from task
         config = task['config']
         
-        # Vérifier si c'est un objet ServerConfig ou une Config complète
+        # Check if it's a ServerConfig or a complete Config
         if hasattr(config, 'server'):
-            # Si c'est une Config complète, on prend l'attribut server
+            # If it's a complete Config, take the server attribute
             server_config = config.server
-            logger.info("Using server config from Config object")
         else:
-            # Si c'est déjà un ServerConfig, on l'utilise directement
+            # If it's already a ServerConfig, use it directly
             server_config = config
-            logger.info("Using ServerConfig object directly")
-            
-        # S'assurer que les paramètres spécifiques à l'évaluation sont correctement définis
+        
+        # Ensure that the evaluation-specific parameters are correctly defined
         server_config.grading_mode = True
         server_config.waiting_time_before_bots_seconds = 0
         server_config.tick_rate = 1000
@@ -95,10 +93,6 @@ def evaluate_agent_task(task):
         
     def dummy_record_disconnection(sciper, reason):
         pass
-
-    # log infos about grading_scores and run_results
-    logger.info(f"Grading scores: {task.get('grading_scores')}")
-    logger.info(f"Run results: {task.get('run_results')}")
     
     # Create a room with the specified number of players
     room = Room(
@@ -119,9 +113,9 @@ def evaluate_agent_task(task):
         bot_seed=current_seed,
     )
     
-    agent_file_path = agent_file  # On utilise le nom du fichier complet avec l'extension .py
+    agent_file_path = agent_file  # Use the full file name with the .py extension
     
-    # Préfixer avec "common.agents." pour avoir le bon format de module Python
+    # Prefix with "common.agents." to have the correct module format
     module_path = f"common.agents.{agents_dir}"
     room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path, agent_dir=module_path)
     
@@ -186,6 +180,11 @@ def setup_server_logger(is_grading_mode):
             "server.ai_client": logging.DEBUG,
             "server.ai_agent": logging.DEBUG,
         }
+
+    # log the levels of the modules
+    server_logger.debug("Modules levels:")
+    for module, level in modules.items():
+        server_logger.debug(f"{module}: {level}")
     
     server_logger.propagate = False
     server_logger.addHandler(console_handler)
@@ -1054,10 +1053,18 @@ class Server:
         stats_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "stats")
         os.makedirs(stats_dir, exist_ok=True)
         
-        # Create Excel file for storing scores with timestamp
+        # Create timestamp for results
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        
+        # Create directory for this run
+        runs_dir = os.path.join(stats_dir, f"runs_{timestamp}")
+        os.makedirs(runs_dir, exist_ok=True)
+        
+        # Create Excel file for storing scores with timestamp
         grades_excel_path = os.path.join(stats_dir, f"grading_results_{timestamp}.xlsx")
-        runs_excel_path = os.path.join(stats_dir, f"runs_{timestamp}.xlsx")
+        
+        # Dictionary to store CSV files for each agent
+        self.agent_csv_files = {}
         
         # Initialize DataFrame with agent names as index
         agent_names = [os.path.splitext(file)[0] for file in agent_files]
@@ -1072,10 +1079,18 @@ class Server:
         # Initialize run_results to store detailed results of each run
         self.run_results = []
         
-        # Create Excel file for runs with headers
-        runs_columns = ["run", "nb players", "student", "student score", "bot1", "score bot 1", "bot2", "score bot 2", "bot3", "score bot 3"]
-        runs_df = pd.DataFrame(columns=runs_columns)
-        runs_df.to_excel(runs_excel_path, index=False)
+        # Define the columns for the CSV files
+        self.runs_columns = ["run", "nb players", "student", "student score", "bot1", "score bot 1", "bot2", "score bot 2", "bot3", "score bot 3"]
+        
+        # Create an Excel file for each agent
+        for agent_name in agent_names:
+            excel_path = os.path.join(runs_dir, f"{agent_name}.xlsx")
+            # Create an empty DataFrame with the correct columns
+            empty_df = pd.DataFrame(columns=self.runs_columns)
+            # Write header to Excel file
+            empty_df.to_excel(excel_path, index=False)
+            # Store the path for later use
+            self.agent_csv_files[agent_name] = excel_path
 
         # Start timing the evaluation process
         start_time = datetime.datetime.now()
@@ -1131,9 +1146,37 @@ class Server:
                 if result['score'] > 0:
                     scores[agent_name][nb_players] += result['score']
                 
-                # Update run_results if run_data is available
+                # Update run_results and agent's CSV file if run_data is available
                 if result['run_data']:
-                    self.run_results.append(result['run_data'])
+                    run_data = result['run_data']
+                    self.run_results.append(run_data)
+                    
+                    # Write the run data to the agent's Excel file
+                    excel_path = self.agent_csv_files.get(agent_name)
+                    if excel_path:
+                        # Create a DataFrame with the run data
+                        run_df = pd.DataFrame([run_data])
+                        
+                        # Read existing Excel
+                        try:
+                            existing_df = pd.read_excel(excel_path)
+                            # Append the new data
+                            updated_df = pd.concat([existing_df, run_df], ignore_index=True)
+                        except Exception as e:
+                            self.logger.warning(f"Error reading Excel file: {e}")
+                            # If there's an error, just use the new data
+                            updated_df = run_df
+                        
+                        # Make sure all required columns are present
+                        for col in self.runs_columns:
+                            if col not in updated_df.columns:
+                                updated_df[col] = ''
+                        
+                        # Reorder columns to match the original order
+                        updated_df = updated_df[self.runs_columns]
+                        
+                        # Write back to Excel without index
+                        updated_df.to_excel(excel_path, index=False)
                 
                 # Add to results list
                 results.append(result)
@@ -1154,24 +1197,13 @@ class Server:
         df.to_excel(grades_excel_path)
         self.logger.info(f"Saved grading results to {grades_excel_path}")
         
-        # Save run results to Excel file
-        if self.run_results:
-            # Create a DataFrame from the run results
-            runs_df = pd.DataFrame(self.run_results)
-            
-            # Ensure all columns are present, even if empty
-            for col in runs_columns:
-                if col not in runs_df.columns:
-                    runs_df[col] = None
-            
-            # Reorganize columns according to the requested order
-            runs_df = runs_df[runs_columns]
-            
-            # Save to Excel file
-            runs_df.to_excel(runs_excel_path, index=False)
-            self.logger.info(f"Saved detailed run results to {runs_excel_path}")
+        # Log summary of Excel files created
+        if self.agent_csv_files:
+            self.logger.info(f"Saved detailed run results to individual Excel files in {os.path.dirname(next(iter(self.agent_csv_files.values())))}/")
+            for agent_name, excel_path in self.agent_csv_files.items():
+                self.logger.info(f"  - {agent_name}: {os.path.basename(excel_path)}")
         else:
-            self.logger.warning("No run results collected to save to Excel")
+            self.logger.warning("No run results collected to save to Excel files")
         
         # Calculate and log the total execution time
         end_time = datetime.datetime.now()
