@@ -1249,6 +1249,10 @@ class Server:
         self.logger.info(f"Total execution time: {execution_time}")
         
         self.logger.info("Completed all evaluation runs")
+        
+        # Set running to False to stop the server since grading is complete
+        self.logger.info("Grading mode complete - shutting down server")
+        self.running = False
 
     def remove_room(self, room_id):
         """Remove a room from the server"""
@@ -1315,7 +1319,8 @@ class Server:
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        self.logger.info("Server running. Press Ctrl+C to stop.")
+        if not self.config.grading_mode:
+            self.logger.info("Server running. Press Ctrl+C to stop.")
 
         while self.running:
             # Main loop waits for running flag to become false
