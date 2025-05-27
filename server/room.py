@@ -163,7 +163,7 @@ class Room:
         nb_bots_needed = self.nb_players_max - current_players
         self.fill_with_bots(nb_bots_needed)
 
-        for ai_name in self.game.ai_clients.keys():
+        for ai_name in list(self.game.ai_clients.keys()):
             if ai_name not in self.game.trains:
                 logger.debug(f"Adding train for AI client {ai_name}")
             
