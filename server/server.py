@@ -22,8 +22,13 @@ import datetime
 # Cette fonction doit être définie au niveau du module pour pouvoir être sérialisée par multiprocessing
 def evaluate_agent_task(task):
     """Fonction d'évaluation d'un agent pour multiprocessing"""
-    # Unpack the task parameters
-    agent_file, nb_players, run_index, current_seed, nb_runs_per_session, agents_dir, config_path = task
+    # Get parameters from the task dictionary
+    agent_file = task['agent_file']
+    nb_players = task['nb_players']
+    run_index = task['run_index']
+    current_seed = task['current_seed']
+    nb_runs_per_session = task['nb_runs_per_session']
+    agents_dir = task['agents_dir']
     
     # Import necessary modules at the beginning of the function
     import sys
@@ -40,34 +45,38 @@ def evaluate_agent_task(task):
     parent_dir = os.path.dirname(current_dir)
     sys.path.append(parent_dir)
     
-    from common.config import Config
     from server.room import Room
     
     # Setup a logger for this process
     logger = logging.getLogger(f"server.worker.{agent_name}.{nb_players}.{run_index}")
     logger.setLevel(logging.INFO)
     
-    # Load configuration from the same file as the main process
+    # Utiliser la configuration transmise depuis le processus principal
     try:
-        # Ensure the config_path is absolute
-        if not os.path.isabs(config_path):
-            config_path = os.path.abspath(config_path)
+        # Récupérer la config depuis task
+        config = task['config']
         
-        # Verify if file exists
-        if not os.path.exists(config_path):
-            logger.warning(f"Configuration file {config_path} not found, using default config.json")
-            config_path = os.path.join(parent_dir, "config.json")
-        
-        logger.info(f"Loading configuration from {config_path}")
-        config = Config.load(config_path)  # Utilisation de la méthode statique load() au lieu du constructeur
-        config.server.grading_mode = True
-        config.server.waiting_time_before_bots_seconds = 0
-        config.server.tick_rate = 1000
+        # Vérifier si c'est un objet ServerConfig ou une Config complète
+        if hasattr(config, 'server'):
+            # Si c'est une Config complète, on prend l'attribut server
+            server_config = config.server
+            logger.info("Using server config from Config object")
+        else:
+            # Si c'est déjà un ServerConfig, on l'utilise directement
+            server_config = config
+            logger.info("Using ServerConfig object directly")
+            
+        # S'assurer que les paramètres spécifiques à l'évaluation sont correctement définis
+        server_config.grading_mode = True
+        server_config.waiting_time_before_bots_seconds = 0
+        server_config.tick_rate = 1000
         
         # Verify if agents list exists and is not empty
-        if not hasattr(config.server, 'agents') or not config.server.agents:
+        if not hasattr(server_config, 'agents') or not server_config.agents:
             logger.warning(f"No agents found in config, this will cause errors in Room.fill_with_bots")
     except Exception as e:
+        # log config
+        logger.info(f"Config: {config}")
         logger.error(f"Error loading configuration: {e}")
         raise
     
@@ -86,10 +95,14 @@ def evaluate_agent_task(task):
         
     def dummy_record_disconnection(sciper, reason):
         pass
+
+    # log infos about grading_scores and run_results
+    logger.info(f"Grading scores: {task.get('grading_scores')}")
+    logger.info(f"Run results: {task.get('run_results')}")
     
     # Create a room with the specified number of players
     room = Room(
-        config.server,
+        server_config,
         room_id,
         nb_players,
         True,  # running
@@ -99,8 +112,8 @@ def evaluate_agent_task(task):
         {},  # addr_to_sciper
         dummy_record_disconnection,
         tqdm_message,
-        grading_scores=None,  # Will handle scores separately
-        run_results=None,  # Will handle run_results separately
+        grading_scores=task.get('grading_scores', {}),  # Pass the scores dictionary from the task
+        run_results=task.get('run_results', []),  # Pass the run results list from the task
         current_run_index=run_index,
         current_nb_players=nb_players,
         bot_seed=current_seed,
@@ -120,12 +133,17 @@ def evaluate_agent_task(task):
         room.game_thread.join()
     
     # Extract results from the room
+    # Get the run_data from the last entry in room.run_results if it exists
+    run_data = None
+    if hasattr(room, 'run_results') and room.run_results:
+        run_data = room.run_results[-1]  # Get the most recent run result
+    
     result = {
         'agent_name': agent_name,
         'nb_players': nb_players,
         'run_index': run_index,
         'score': room.student_score if hasattr(room, 'student_score') else 0,
-        'run_data': room.run_data if hasattr(room, 'run_data') else None
+        'run_data': run_data
     }
     
     return result
@@ -222,6 +240,10 @@ class Server:
             set()
         )  # Track disconnected clients by full address tuple (IP, port)
         self.threads = []  # Initialize threads attribute
+        
+        # Initialize grading attributes to avoid errors
+        self.grading_scores = {}
+        self.run_results = []
 
         if self.config.grading_mode:
             self.run_grading_mode()
@@ -1059,15 +1081,8 @@ class Server:
         start_time = datetime.datetime.now()
         self.logger.info(f"Starting evaluation at {start_time}")
         
-        # Obtenir le chemin du fichier de configuration s'il existe
-        config_path = None
-        if hasattr(self.config, '_config_path') and self.config._config_path:
-            config_path = self.config._config_path
-        else:
-            # Si pas de chemin explicite, utiliser le fichier par défaut
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
-            
-        self.logger.info(f"Using configuration file: {config_path}")
+        # Pas besoin de chercher un chemin de config, on utilise directement la config existante
+        self.logger.info("Using current configuration for evaluation")
             
         # Create tasks for all evaluations
         tasks = []
@@ -1075,8 +1090,19 @@ class Server:
             for nb_players in nb_players_per_session_list:
                 for run_index in range(nb_runs_per_session):
                     current_seed = run_seeds[run_index]
-                    # Inclure l'information sur le nombre total de runs, le répertoire des agents et le chemin de configuration
-                    tasks.append((agent_file, nb_players, run_index, current_seed, nb_runs_per_session, self.config.grading_mode_args.agents_dir, config_path))
+                    # Créer un dictionnaire au lieu d'un tuple pour passer plus facilement les références
+                    task = {
+                        'agent_file': agent_file,
+                        'nb_players': nb_players,
+                        'run_index': run_index,
+                        'current_seed': current_seed,
+                        'nb_runs_per_session': nb_runs_per_session,
+                        'agents_dir': self.config.grading_mode_args.agents_dir,
+                        'config': self.config,
+                        'grading_scores': self.grading_scores,
+                        'run_results': self.run_results
+                    }
+                    tasks.append(task)
         
         # Configure multiprocessing to use spawn method
         import multiprocessing
