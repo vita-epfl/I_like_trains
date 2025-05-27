@@ -103,8 +103,6 @@ def evaluate_agent_task(task):
         if not hasattr(server_config, 'agents') or not server_config.agents:
             logger.warning(f"No agents found in config, this will cause errors in Room.fill_with_bots")
     except Exception as e:
-        # log config
-        logger.info(f"Config: {config}")
         logger.error(f"Error loading configuration: {e}")
         raise
     
