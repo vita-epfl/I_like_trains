@@ -18,54 +18,216 @@ from server.train import BOOST_COOLDOWN_DURATION
 import pandas as pd
 import datetime
 
-def setup_server_logger(is_grading_mode):
-    # Create a handler for the console
+
+# Cette fonction doit être définie au niveau du module pour pouvoir être sérialisée par multiprocessing
+def evaluate_agent_task(task):
+    """Fonction d'évaluation d'un agent pour multiprocessing"""    
+    # Get parameters from the task dictionary
+    agent_file = task['agent_file']
+    nb_players = task['nb_players']
+    run_index = task['run_index']
+    current_seed = task['current_seed']
+    nb_runs_per_session = task['nb_runs_per_session']
+    agents_dir = task['agents_dir']
+    
+    # Import necessary modules at the beginning of the function
+    import sys
+    import os
+    import uuid
+    import socket
+    import logging
+    
+    agent_name = os.path.splitext(agent_file)[0]
+    tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players (seed: {current_seed})"
+    
+    # Import the config module
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    sys.path.append(parent_dir)
+    
+    from server.room import Room
+    
+    # Setup a logger for this process
+    logger = logging.getLogger(f"server.worker.{agent_name}.{nb_players}.{run_index}")
+    logger.setLevel(logging.INFO)
+    
+    # Configuration des logs pour ce processus d'évaluation
+    # Reset all logging
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+    
+    # Create a console handler
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
-
-    # Define the format
+    
+    # Create a formatter
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     console_handler.setFormatter(formatter)
-
-    # Configure the main server logger
-    server_logger = logging.getLogger("server")
     
-    # If in grading mode, set all modules to CRITICAL except server which should be INFO
-    if is_grading_mode:
-        server_logger.setLevel(logging.INFO)
-        modules = {
-        "server.room": logging.CRITICAL, # INFO to get information about the run completion and results
-        "server.game": logging.CRITICAL,
-        "server.train": logging.CRITICAL,
-        "server.passenger": logging.CRITICAL,
-        "server.delivery_zone": logging.CRITICAL,
-        "server.ai_client": logging.CRITICAL,
-        "server.ai_agent": logging.CRITICAL,
+    # Configure the root logger
+    logging.root.setLevel(logging.DEBUG)
+    logging.root.addHandler(console_handler)
+    
+    # Configure les loggers de serveur pour les mettre en CRITICAL (grading mode)
+    modules = [
+        "server.room", "server.game", "server.train", "server.passenger",
+        "server.delivery_zone", "server.ai_client", "server.ai_agent"
+    ]
+    
+    # Configure chaque logger de module avec le niveau CRITICAL
+    for module in modules:
+        module_logger = logging.getLogger(module)
+        module_logger.setLevel(logging.CRITICAL)
+    
+    # Use the configuration transmise depuis le processus principal
+    try:
+        # Get the config from task
+        config = task['config']
+        
+        # Check if it's a ServerConfig or a complete Config
+        if hasattr(config, 'server'):
+            # If it's a complete Config, take the server attribute
+            server_config = config.server
+        else:
+            # If it's already a ServerConfig, use it directly
+            server_config = config
+        
+        # Ensure that the evaluation-specific parameters are correctly defined
+        server_config.grading_mode = True
+        server_config.waiting_time_before_bots_seconds = 0
+        server_config.tick_rate = 1000
+        
+        # Verify if agents list exists and is not empty
+        if not hasattr(server_config, 'agents') or not server_config.agents:
+            logger.warning(f"No agents found in config, this will cause errors in Room.fill_with_bots")
+    except Exception as e:
+        logger.error(f"Error loading configuration: {e}")
+        raise
+    
+    # Create a unique room ID
+    room_id = str(uuid.uuid4())[:8]
+    
+    # Setup a dummy server socket (won't be used for actual networking in worker process)
+    dummy_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
+    # Create room callbacks (dummies for worker process)
+    def dummy_send_cooldown_notification(nickname, cooldown, death_reason):
+        pass
+        
+    def dummy_remove_room(room_id):
+        pass
+        
+    def dummy_record_disconnection(sciper, reason):
+        pass
+    
+    # Create a room with the specified number of players
+    room = Room(
+        server_config,
+        room_id,
+        nb_players,
+        True,  # running
+        dummy_socket,
+        dummy_send_cooldown_notification,
+        dummy_remove_room,
+        {},  # addr_to_sciper
+        dummy_record_disconnection,
+        tqdm_message,
+        grading_scores=task.get('grading_scores', {}),  # Pass the scores dictionary from the task
+        run_results=task.get('run_results', []),  # Pass the run results list from the task
+        current_run_index=run_index,
+        current_nb_players=nb_players,
+        bot_seed=current_seed,
+    )
+    
+    agent_file_path = agent_file  # Use the full file name with the .py extension
+    
+    # Prefix with "common.agents." to have the correct module format
+    module_path = f"common.agents.{agents_dir}"
+    room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path, agent_dir=module_path)
+    
+    # Start the game
+    room.start_game()
+    
+    # Wait for this room to finish
+    if room and room.game_thread and room.game_thread.is_alive():
+        room.game_thread.join()
+    
+    # Extract results from the room
+    # Get the run_data from the last entry in room.run_results if it exists
+    run_data = None
+    if hasattr(room, 'run_results') and room.run_results:
+        run_data = room.run_results[-1]  # Get the most recent run result
+    
+    result = {
+        'agent_name': agent_name,
+        'nb_players': nb_players,
+        'run_index': run_index,
+        'score': room.student_score if hasattr(room, 'student_score') else 0,
+        'run_data': run_data
     }
-    else:
-        server_logger.setLevel(logging.DEBUG)
-        # Configure the loggers of the sub-modules with default levels
-        modules = {
-            "server.room": logging.DEBUG,
-            "server.game": logging.DEBUG,
-            "server.train": logging.DEBUG,
-            "server.passenger": logging.DEBUG,
-            "server.delivery_zone": logging.DEBUG,
-            "server.ai_client": logging.DEBUG,
-            "server.ai_agent": logging.DEBUG,
-        }
     
-    server_logger.propagate = False
-    server_logger.addHandler(console_handler)
+    return result
+
+# Configuration simplifiée sans classe de filtrage
+
+def setup_server_logger(is_grading_mode):
+    # Reset all logging
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
     
-    # Configure each module logger with its specified level
+    # Create a console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG)
+
+    # Create a formatter
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    console_handler.setFormatter(formatter)
+    
+    # Configure the root logger
+    logging.root.setLevel(logging.DEBUG)  # Allow all messages through root
+    logging.root.addHandler(console_handler)
+    
+    # Configure server logger
+    server_logger = logging.getLogger("server")
+    server_logger.setLevel(logging.INFO if is_grading_mode else logging.DEBUG)
+    
+    # Define module log levels and apply them directly
+    modules = {
+        "server.room": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.game": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.train": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.passenger": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.delivery_zone": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.ai_client": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+        "server.ai_agent": logging.CRITICAL if is_grading_mode else logging.DEBUG,
+    }
+
+    # Configure each module logger with the appropriate level
     for module, level in modules.items():
         logger = logging.getLogger(module)
         logger.setLevel(level)
-        logger.propagate = False
-        logger.addHandler(console_handler)
+    
+    # Only log the logger configuration in non-grading mode
+    if not is_grading_mode:
+        server_logger.debug("Setting up logging with filter-based approach")
+        server_logger.debug(f"Grading mode: {is_grading_mode}")
+    
+    # For each module, configure it to use our common handler
+    for module, level in modules.items():
+        logger = logging.getLogger(module)
+        # Don't need to set handlers or level - the filter will control what gets through
+        logger.propagate = True  # Let messages propagate to root logger with our filter
+    
+    # Print confirmation in non-grading mode
+    if not is_grading_mode:
+        server_logger.debug("Logging setup complete.")
+        for module, level in modules.items():
+            server_logger.debug(f"{module}: {'CRITICAL' if is_grading_mode else 'DEBUG'}")
+
 
     return server_logger
 
@@ -75,6 +237,9 @@ class Server:
         self.config = config.server
 
         self.logger = setup_server_logger(self.config.grading_mode)
+
+        # log self.config
+        self.logger.debug(f"Config: {self.config}")
 
         # if grading mode, set waiting_time_before_bots_seconds to 0
         if self.config.grading_mode:
@@ -110,6 +275,10 @@ class Server:
             set()
         )  # Track disconnected clients by full address tuple (IP, port)
         self.threads = []  # Initialize threads attribute
+        
+        # Initialize grading attributes to avoid errors
+        self.grading_scores = {}
+        self.run_results = []
 
         if self.config.grading_mode:
             self.run_grading_mode()
@@ -884,8 +1053,8 @@ class Server:
                 self.logger.error(f"Error calling stats_manager.record_disconnection for {sciper}: {e}")
 
     def run_grading_mode(self):
-        """Run evaluation for all agents in the agents folder"""
-        self.logger.info("Server started in grading mode")
+        """Run evaluation for all agents in the agents folder using multiprocessing"""
+        self.logger.info("Server started in grading mode with multiprocessing")
 
         # Get the configuration parameters for grading mode
         nb_players_per_session_list = self.config.grading_mode_args.nb_players_per_session
@@ -894,6 +1063,7 @@ class Server:
         
         # Get the path to the agents to evaluate folder
         agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "common", "agents", agents_dir)
+        agents_dir = os.path.normpath(agents_dir)  # Normaliser le chemin pour éviter les problèmes de séparateurs
         self.logger.info(f"Looking for agents to evaluate in: {agents_dir}")
         
         # Find all Python files in the agents folder that don't have .template extension
@@ -908,8 +1078,8 @@ class Server:
         
         self.logger.info(f"Found {len(agent_files)} agent(s) to evaluate: {agent_files}")
 
-        # Générer les seeds pour chaque run_index avant de commencer l'évaluation
-        # Ainsi, pour un même run_index, on aura toujours le même seed, peu importe l'agent ou nb_players
+        # Generate seeds for each run_index before starting evaluation
+        # So for the same run_index, we'll always have the same seed, regardless of agent or nb_players
         run_seeds = {}
         for run_index in range(nb_runs_per_session):
             run_seeds[run_index] = random.randint(1, 1000000)
@@ -919,10 +1089,18 @@ class Server:
         stats_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "stats")
         os.makedirs(stats_dir, exist_ok=True)
         
-        # Create Excel file for storing scores with timestamp
+        # Create timestamp for results
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        
+        # Create directory for this run
+        runs_dir = os.path.join(stats_dir, f"runs_{timestamp}")
+        os.makedirs(runs_dir, exist_ok=True)
+        
+        # Create Excel file for storing scores with timestamp
         grades_excel_path = os.path.join(stats_dir, f"grading_results_{timestamp}.xlsx")
-        runs_excel_path = os.path.join(stats_dir, f"runs_{timestamp}.xlsx")
+        
+        # Dictionary to store CSV files for each agent
+        self.agent_csv_files = {}
         
         # Initialize DataFrame with agent names as index
         agent_names = [os.path.splitext(file)[0] for file in agent_files]
@@ -937,46 +1115,107 @@ class Server:
         # Initialize run_results to store detailed results of each run
         self.run_results = []
         
-        # Create Excel file for runs with headers
-        runs_columns = ["run", "nb players", "student", "student score", "bot1", "score bot 1", "bot2", "score bot 2", "bot3", "score bot 3"]
-        runs_df = pd.DataFrame(columns=runs_columns)
-        runs_df.to_excel(runs_excel_path, index=False)
+        # Define the columns for the CSV files
+        self.runs_columns = ["run", "nb players", "student", "student score", "bot1", "score bot 1", "bot2", "score bot 2", "bot3", "score bot 3"]
+        
+        # Create an Excel file for each agent
+        for agent_name in agent_names:
+            excel_path = os.path.join(runs_dir, f"{agent_name}.xlsx")
+            # Create an empty DataFrame with the correct columns
+            empty_df = pd.DataFrame(columns=self.runs_columns)
+            # Write header to Excel file
+            empty_df.to_excel(excel_path, index=False)
+            # Store the path for later use
+            self.agent_csv_files[agent_name] = excel_path
 
         # Start timing the evaluation process
         start_time = datetime.datetime.now()
         self.logger.info(f"Starting evaluation at {start_time}")
         
-        # For each agent to evaluate in the folder "agents"
-        for agent_file in agent_files:
-            agent_name = os.path.splitext(agent_file)[0]
-            self.logger.info(f"Evaluating agent: {agent_name}")
+        # Pas besoin de chercher un chemin de config, on utilise directement la config existante
+        self.logger.info("Using current configuration for evaluation")
             
-            # For each 'nb_players_per_session'
+        # Create tasks for all evaluations
+        tasks = []
+        for agent_file in agent_files:
             for nb_players in nb_players_per_session_list:
-                self.logger.debug(f"Running evaluation with {nb_players} players per session")
-                
-                # For 'nb_runs_per_session' times
                 for run_index in range(nb_runs_per_session):
-                    # Récupérer le seed correspondant au run_index actuel
                     current_seed = run_seeds[run_index]
-                    tqdm_message = f"Run {run_index + 1}/{nb_runs_per_session} for {agent_name} with {nb_players} players (seed: {current_seed})"
+                    # Créer un dictionnaire au lieu d'un tuple pour passer plus facilement les références
+                    task = {
+                        'agent_file': agent_file,
+                        'nb_players': nb_players,
+                        'run_index': run_index,
+                        'current_seed': current_seed,
+                        'nb_runs_per_session': nb_runs_per_session,
+                        'agents_dir': self.config.grading_mode_args.agents_dir,
+                        'config': self.config,
+                        'grading_scores': self.grading_scores,
+                        'run_results': self.run_results
+                    }
+                    tasks.append(task)
+        
+        # Configure multiprocessing to use spawn method
+        import multiprocessing
+        try:
+            multiprocessing.set_start_method('spawn', force=True)
+        except RuntimeError:
+            self.logger.warning("Spawn method already set or not available, continuing with current method")
+        
+        # Import tqdm here to ensure it's available in the main process
+        from tqdm import tqdm
+        
+        # Use a Pool to run evaluations in parallel
+        worker_count = min(multiprocessing.cpu_count(), len(tasks))
+        self.logger.info(f"Starting multiprocessing pool with {worker_count} workers")
+        
+        # Process all tasks and collect results
+        results = []
+        with multiprocessing.Pool(processes=worker_count) as pool:
+            # Run all evaluations and collect results
+            for result in tqdm(pool.imap_unordered(evaluate_agent_task, tasks), total=len(tasks), desc="Evaluating agents"):
+                # Process each result as it completes
+                agent_name = result['agent_name']
+                nb_players = result['nb_players']
+                
+                # Update scores
+                if result['score'] > 0:
+                    scores[agent_name][nb_players] += result['score']
+                
+                # Update run_results and agent's CSV file if run_data is available
+                if result['run_data']:
+                    run_data = result['run_data']
+                    self.run_results.append(run_data)
                     
-                    # Create a room with the specified number of players
-                    room = self.create_room(True, nb_players, tqdm_message, run_index, current_seed)
-                    
-                    # Add the student agent to evaluate
-                    # student_nickname = f"Student_{agent_name}"
-                    # Prefix the module with agents_to_evaluate.
-                    # Note: for Python imports, we use dots not slashes
-                    agent_file_path = f"{self.config.grading_mode_args.agents_dir}.{agent_file}"
-                    room.add_student_ai(ai_nickname=agent_name, ai_agent_file_name=agent_file_path)
-                    
-                    # Start the game
-                    room.start_game()
-                    
-                    # Wait for this room to finish before creating the next one
-                    if room and room.game_thread and room.game_thread.is_alive():
-                        room.game_thread.join()
+                    # Write the run data to the agent's Excel file
+                    excel_path = self.agent_csv_files.get(agent_name)
+                    if excel_path:
+                        # Create a DataFrame with the run data
+                        run_df = pd.DataFrame([run_data])
+                        
+                        # Read existing Excel
+                        try:
+                            existing_df = pd.read_excel(excel_path)
+                            # Append the new data
+                            updated_df = pd.concat([existing_df, run_df], ignore_index=True)
+                        except Exception as e:
+                            self.logger.warning(f"Error reading Excel file: {e}")
+                            # If there's an error, just use the new data
+                            updated_df = run_df
+                        
+                        # Make sure all required columns are present
+                        for col in self.runs_columns:
+                            if col not in updated_df.columns:
+                                updated_df[col] = ''
+                        
+                        # Reorder columns to match the original order
+                        updated_df = updated_df[self.runs_columns]
+                        
+                        # Write back to Excel without index
+                        updated_df.to_excel(excel_path, index=False)
+                
+                # Add to results list
+                results.append(result)
         
         # Convert scores to DataFrame and add a Total column
         for agent_name in agent_names:
@@ -994,24 +1233,13 @@ class Server:
         df.to_excel(grades_excel_path)
         self.logger.info(f"Saved grading results to {grades_excel_path}")
         
-        # Save run results to Excel file
-        if self.run_results:
-            # Create a DataFrame from the run results
-            runs_df = pd.DataFrame(self.run_results)
-            
-            # Ensure all columns are present, even if empty
-            for col in runs_columns:
-                if col not in runs_df.columns:
-                    runs_df[col] = None
-            
-            # Reorganize columns according to the requested order
-            runs_df = runs_df[runs_columns]
-            
-            # Save to Excel file
-            runs_df.to_excel(runs_excel_path, index=False)
-            self.logger.info(f"Saved detailed run results to {runs_excel_path}")
+        # Log summary of Excel files created
+        if self.agent_csv_files:
+            self.logger.info(f"Saved detailed run results to individual Excel files in {os.path.dirname(next(iter(self.agent_csv_files.values())))}/")
+            for agent_name, excel_path in self.agent_csv_files.items():
+                self.logger.info(f"  - {agent_name}: {os.path.basename(excel_path)}")
         else:
-            self.logger.warning("No run results collected to save to Excel")
+            self.logger.warning("No run results collected to save to Excel files")
         
         # Calculate and log the total execution time
         end_time = datetime.datetime.now()
@@ -1019,6 +1247,10 @@ class Server:
         self.logger.info(f"Total execution time: {execution_time}")
         
         self.logger.info("Completed all evaluation runs")
+        
+        # Set running to False to stop the server since grading is complete
+        self.logger.info("Grading mode complete - shutting down server")
+        self.running = False
 
     def remove_room(self, room_id):
         """Remove a room from the server"""
@@ -1085,7 +1317,8 @@ class Server:
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        self.logger.info("Server running. Press Ctrl+C to stop.")
+        if not self.config.grading_mode:
+            self.logger.info("Server running. Press Ctrl+C to stop.")
 
         while self.running:
             # Main loop waits for running flag to become false

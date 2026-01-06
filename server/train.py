@@ -7,12 +7,7 @@ import logging
 from common.move import Move
 from common.constants import REFERENCE_TICK_RATE
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("game_debug.log"), logging.StreamHandler()],
-)
+# Logging is configured by server.py
 
 server_logger = logging.getLogger("server.train")
 
