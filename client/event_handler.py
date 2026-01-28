@@ -2,11 +2,17 @@
 Module for handling events for the I Like Trains client
 """
 
+from __future__ import annotations
+
 import pygame
 import logging
+from typing import TYPE_CHECKING
 
 from common.client_config import GameMode
 from common.move import Move
+
+if TYPE_CHECKING:
+    from client.client import Client
 
 
 # Configure the logger
@@ -16,12 +22,12 @@ logger = logging.getLogger("client.event_handler")
 class EventHandler:
     """Class responsible for handling client events"""
 
-    def __init__(self, client, game_mode):
+    def __init__(self, client: Client, game_mode: GameMode) -> None:
         """Initialize the event handler with a reference to the client"""
-        self.client = client
-        self.game_mode = game_mode
+        self.client: Client = client
+        self.game_mode: GameMode = game_mode
 
-    def handle_events(self):
+    def handle_events(self) -> None:
         """Handle pygame events"""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
