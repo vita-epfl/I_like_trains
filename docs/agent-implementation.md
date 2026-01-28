@@ -20,12 +20,40 @@ You can check the data available in the client by using the logger:
 
 ```python
 self.logger.debug(self.all_trains)
-self.logger.debug(self.all_passengers)
-self.logger.debug(self.delivery_zones)
+self.logger.debug(self.passengers)
+self.logger.debug(self.delivery_zone)
 self.logger.debug(self.best_scores)
 ```
 
 or by directly checking what is returned by the `to_dict()` method in each class. For example to check the train's data format, check the method `to_dict()` in `server/train.py`. For the passenger, check `server/passenger.py`. Etc.
+
+## Delivery Zone Data Structure
+
+The `self.delivery_zone` attribute is a dictionary with the following structure:
+
+```python
+{
+    "position": (x, y),  # Top-left corner coordinates (in pixels)
+    "width": width,       # Width in pixels (extends to the right)
+    "height": height      # Height in pixels (extends downward)
+}
+```
+
+**Coordinate System:**
+- The game uses a pixel-based coordinate system where **(0, 0) is the TOP-LEFT corner** of the game area.
+- **X increases to the RIGHT**.
+- **Y increases DOWNWARD**.
+
+**Understanding the delivery zone bounds:**
+- The `position` tuple `(x, y)` represents the **top-left corner** of the delivery zone.
+- The zone extends from `(x, y)` to `(x + width, y + height)` (exclusive on the right/bottom edges).
+- A train position `(px, py)` is **inside** the delivery zone if: `x <= px < x + width` AND `y <= py < y + height`.
+
+**Example:**
+If `delivery_zone = {"position": (100, 50), "width": 60, "height": 40}`:
+- Top-left corner: `(100, 50)`
+- Bottom-right corner: `(159, 89)` (since bounds are exclusive)
+- Any position `(px, py)` where `100 <= px < 160` AND `50 <= py < 90` is inside the zone.
 
 ## Implementation Task
 
