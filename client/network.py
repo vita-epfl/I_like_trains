@@ -8,9 +8,19 @@ import json
 import logging
 import threading
 import time
+from typing import TYPE_CHECKING
 
 from common.version import EXPECTED_CLIENT_VERSION
+from common.messages import (
+    PongMessage,
+    AgentIdsMessage,
+    DirectionActionMessage,
+    RespawnActionMessage,
+    DropWagonActionMessage,
+)
 
+if TYPE_CHECKING:
+    from client.client import Client
 
 # Configure logging
 logging.basicConfig(
@@ -175,7 +185,7 @@ class NetworkManager:
 
                         elif message_type == "ping":
                             # Respond to ping with pong
-                            self.send_message({"type": "pong"})
+                            self.send_pong()
                             self.last_ping_time = time.time()
 
                         elif message_type == "pong":
@@ -343,27 +353,56 @@ class NetworkManager:
             logger.error(f"Error verifying connection: {e}")
             return False
 
-    def send_agent_ids(self, nickname, agent_sciper, game_mode):
+    def send_agent_ids(self, nickname: str, agent_sciper: str, game_mode: str) -> bool:
         """Send agent name and sciper to server"""
-        message = {
-            "type": "agent_ids",
-            "nickname": nickname,
-            "agent_sciper": agent_sciper,
-            "game_mode": game_mode,
-        }
-        return self.send_message(message)
+        message = AgentIdsMessage(
+            nickname=nickname,
+            agent_sciper=agent_sciper,
+            game_mode=game_mode,
+        )
+        return self.send_pydantic_message(message)
 
-    def send_direction_change(self, direction):
+    def send_direction_change(self, direction: tuple[int, int]) -> bool:
         """Send direction change to server"""
-        message = {"action": "direction", "direction": direction}
-        return self.send_message(message)
+        message = DirectionActionMessage(direction=direction)
+        return self.send_pydantic_message(message)
 
-    def send_spawn_request(self):
+    def send_spawn_request(self) -> bool:
         """Send spawn request to server"""
-        message = {"action": "respawn"}
-        return self.send_message(message)
+        message = RespawnActionMessage()
+        return self.send_pydantic_message(message)
 
-    def send_drop_wagon_request(self):
+    def send_drop_wagon_request(self) -> bool:
         """Send request to drop passenger"""
-        message = {"action": "drop_wagon"}
-        return self.send_message(message)
+        message = DropWagonActionMessage()
+        return self.send_pydantic_message(message)
+
+    def send_pong(self) -> bool:
+        """Send pong response to server"""
+        message = PongMessage()
+        return self.send_pydantic_message(message)
+
+    def send_pydantic_message(self, message) -> bool:
+        """Send a Pydantic message to server"""
+        if not self.socket:
+            logger.error("Cannot send message: UDP socket not created")
+            self.disconnect(True)
+            return False
+
+        try:
+            serialized = message.to_json()
+            bytes_sent = self.socket.sendto(serialized.encode(), self.server_addr)
+            return bytes_sent > 0
+        except ConnectionResetError:
+            return False
+        except socket.error as e:
+            if "10054" in str(e):
+                pass
+            elif "10038" in str(e):
+                pass
+            else:
+                logger.error(f"Failed to send UDP message: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to send UDP message: {e}")
+            return False

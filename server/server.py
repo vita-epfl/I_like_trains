@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import socket
 import json
@@ -8,11 +10,27 @@ import uuid
 import signal
 import random
 import urllib.request
+
 from common import stats_manager
 from common.config import Config
+from common.version import EXPECTED_CLIENT_VERSION
+from common.messages import (
+    PongMessage,
+    PingMessage,
+    DisconnectMessage,
+    NameCheckMessage,
+    SciperCheckMessage,
+    JoinSuccessMessage,
+    WaitingRoomMessage,
+    WaitingRoomData,
+    RespawnFailedMessage,
+    DeathMessage,
+    SpawnSuccessMessage,
+    DropWagonSuccessMessage,
+    DropWagonFailedMessage,
+)
 from server.passenger import Passenger
 from server.room import Room
-from common.version import EXPECTED_CLIENT_VERSION
 from server.train import BOOST_COOLDOWN_DURATION
 
 import pandas as pd
@@ -487,10 +505,10 @@ class Server:
         # Handle ping messages from unknown clients (for connection verification)
         if "type" in message and message["type"] == "ping":
             # Send a pong response even to unknown clients for connection verification
-            pong_message = {"type": "pong"}
+            pong_message = PongMessage()
             try:
                 self.server_socket.sendto(
-                    (json.dumps(pong_message) + "\n\n").encode(), addr
+                    (pong_message.to_json() + "\n").encode(), addr
                 )
                 return
             except Exception as e:
@@ -507,17 +525,14 @@ class Server:
         else:
             self.handle_client_message(addr, message, None)
 
-    def send_disconnect(self, addr, message="Unknown client or invalid message format"):
+    def send_disconnect(self, addr: tuple[str, int], message: str = "Unknown client or invalid message format") -> None:
         """Disconnect a client from the server"""
         self.logger.debug(f"Sending disconnect request to unknown client {addr}")
         # ask the client to disconnect
-        disconnect_message = {
-            "type": "disconnect",
-            "reason": message,
-        }
+        disconnect_message = DisconnectMessage(reason=message)
         try:
             self.server_socket.sendto(
-                (json.dumps(disconnect_message) + "\n").encode(), addr
+                disconnect_message.to_json().encode(), addr
             )
             self.logger.info(f"Sent disconnect request to unknown client {addr}")
         except Exception as e:
@@ -553,11 +568,11 @@ class Server:
             if not name_to_check or len(name_to_check) == 0 or len(name_to_check) > 15:
                 reason = "empty name" if not name_to_check else "name too long" if len(name_to_check) > 15 else "empty name"
                 # Empty name, considered as not available
-                response = {"type": "name_check", "available": False, "reason": reason}
+                response = NameCheckMessage(available=False, reason=reason)
 
                 try:
                     self.server_socket.sendto(
-                        (json.dumps(response) + "\n").encode(), addr
+                        response.to_json().encode(), addr
                     )
                 except Exception as e:
                     self.logger.error(f"Error sending name check response: {e}")
@@ -596,12 +611,10 @@ class Server:
             reason = "name starts with 'staff'"
 
         if addr:
-            response = {"type": "name_check", "available": name_available}
-            if not name_available:
-                response["reason"] = reason
+            response = NameCheckMessage(available=name_available, reason=reason if not name_available else None)
 
             try:
-                self.server_socket.sendto((json.dumps(response) + "\n").encode(), addr)
+                self.server_socket.sendto(response.to_json().encode(), addr)
             except Exception as e:
                 self.logger.error(f"Error sending name check response: {e}")
 
@@ -623,10 +636,10 @@ class Server:
         ):
             if addr:
                 # Empty sciper, considered as not available
-                response = {"type": "sciper_check", "available": False}
+                response = SciperCheckMessage(available=False)
                 try:
                     self.server_socket.sendto(
-                        (json.dumps(response) + "\n").encode(), addr
+                        response.to_json().encode(), addr
                     )
                 except Exception as e:
                     self.logger.error(f"Error sending sciper check response: {e}")
@@ -635,10 +648,10 @@ class Server:
                 return False
 
         if addr:
-            response = {"type": "sciper_check", "available": True}
+            response = SciperCheckMessage(available=True)
 
             try:
-                self.server_socket.sendto((json.dumps(response) + "\n").encode(), addr)
+                self.server_socket.sendto(response.to_json().encode(), addr)
                 self.logger.info(f"Sciper check for '{sciper_to_check}': available")
             except Exception as e:
                 self.logger.error(f"Error sending sciper check response: {e}")
@@ -730,30 +743,27 @@ class Server:
         )
 
         # Send join success response immediately
-        response = {
-            "type": "join_success",
-            "expected_version": EXPECTED_CLIENT_VERSION
-        }
-        self.server_socket.sendto((json.dumps(response) + "\n").encode(), addr)
-        game_status = {
-            "type": "waiting_room",
-            "data": {
-                "room_id": selected_room.id,
-                "players": list(selected_room.clients.values()),
-                "nb_players": selected_room.nb_players_max,
-                "game_started": selected_room.game_thread is not None,
-                "waiting_time": int(
-                    max(
-                        0,
-                        self.config.waiting_time_before_bots_seconds
-                        - (time.time() - selected_room.room_creation_time),
-                    )
-                )
-                if selected_room.has_clients
-                else 0,
-            },
-        }
-        self.server_socket.sendto((json.dumps(game_status) + "\n").encode(), addr)
+        response = JoinSuccessMessage(expected_version=EXPECTED_CLIENT_VERSION)
+        self.server_socket.sendto(response.to_json().encode(), addr)
+        
+        waiting_time = int(
+            max(
+                0,
+                self.config.waiting_time_before_bots_seconds
+                - (time.time() - selected_room.room_creation_time),
+            )
+        ) if selected_room.has_clients else 0
+        
+        game_status = WaitingRoomMessage(
+            data=WaitingRoomData(
+                room_id=selected_room.id,
+                players=list(selected_room.clients.values()),
+                nb_players=selected_room.nb_players_max,
+                game_started=selected_room.game_thread is not None,
+                waiting_time=waiting_time,
+            )
+        )
+        self.server_socket.sendto(game_status.to_json().encode(), addr)
 
     def handle_client_message(self, addr, message, room=None):
         """Handles messages received from the client"""
@@ -794,9 +804,9 @@ class Server:
                     self.logger.info(
                         f"Ignoring respawn request from {nickname} as the game is over"
                     )
-                    response = {"type": "respawn_failed", "message": "Game is over"}
+                    response = RespawnFailedMessage(message="Game is over")
                     self.server_socket.sendto(
-                        (json.dumps(response) + "\n").encode(), addr
+                        response.to_json().encode(), addr
                     )
                     return
 
@@ -804,27 +814,24 @@ class Server:
 
                 if cooldown > 0:
                     # Inform the client of the remaining cooldown
-                    response = {"type": "death", "remaining": cooldown}
+                    response = DeathMessage(remaining=cooldown)
                     self.server_socket.sendto(
-                        (json.dumps(response) + "\n").encode(), addr
+                        response.to_json().encode(), addr
                     )
                     return
 
                 # Add the train to the game
                 if room.game.add_train(nickname):
-                    response = {"type": "spawn_success", "nickname": nickname}
+                    response = SpawnSuccessMessage(nickname=nickname)
                     self.server_socket.sendto(
-                        (json.dumps(response) + "\n").encode(), addr
+                        response.to_json().encode(), addr
                     )
                 else:
                     self.logger.warning(f"Failed to spawn train {nickname}")
                     # Inform the client of the failure
-                    response = {
-                        "type": "respawn_failed",
-                        "message": "Failed to spawn train",
-                    }
+                    response = RespawnFailedMessage(message="Failed to spawn train")
                     self.server_socket.sendto(
-                        (json.dumps(response) + "\n").encode(), addr
+                        response.to_json().encode(), addr
                     )
 
             elif message.get("action") == "direction":
@@ -843,30 +850,24 @@ class Server:
                         room.game._dirty["passengers"] = True
 
                         # Notify the client of the success with the cooldown
-                        response = {
-                            "type": "drop_wagon_success",
-                            "cooldown": BOOST_COOLDOWN_DURATION
-                        }
+                        response = DropWagonSuccessMessage(cooldown=BOOST_COOLDOWN_DURATION)
                         self.server_socket.sendto(
-                            (json.dumps(response) + "\n").encode(), addr
+                            response.to_json().encode(), addr
                         )
                     else:
                         # Calculate remaining cooldown time if the cooldown is active
-                        message = "Cannot drop wagon (no wagons available)"
+                        error_msg = "Cannot drop wagon (no wagons available)"
                         remaining_cooldown = 0
                         
                         if room.game.trains[nickname].boost_cooldown_active:
                             # Use tick-based cooldown calculation
                             remaining_cooldown = room.game.trains[nickname].get_boost_cooldown_time()
-                            message = f"Cannot drop wagon (cooldown active for {remaining_cooldown:.1f} ticks)"
+                            error_msg = f"Cannot drop wagon (cooldown active for {remaining_cooldown:.1f} ticks)"
                         
                         # Notify the client that the drop_wagon action failed
-                        response = {
-                            "type": "drop_wagon_failed",
-                            "message": message,
-                        }
+                        response = DropWagonFailedMessage(message=error_msg)
                         self.server_socket.sendto(
-                            (json.dumps(response) + "\n").encode(), addr
+                            response.to_json().encode(), addr
                         )
 
         except Exception as e:
@@ -886,9 +887,9 @@ class Server:
                         ):
                             return
 
-                        response = {"type": "death", "remaining": cooldown, "reason": death_reason}
+                        response = DeathMessage(remaining=cooldown, reason=death_reason)
                         self.server_socket.sendto(
-                            (json.dumps(response) + "\n").encode(), addr
+                            response.to_json().encode(), addr
                         )
                         return
                     except Exception as e:
@@ -931,10 +932,10 @@ class Server:
                     continue
 
                 # Send a ping message to the client
-                ping_message = {"type": "ping"}
+                ping_message = PingMessage()
                 try:
                     self.server_socket.sendto(
-                        (json.dumps(ping_message) + "\n").encode(), addr
+                        ping_message.to_json().encode(), addr
                     )
                     # Add the client to the ping responses dictionary with the current time
                     self.ping_responses[addr] = current_time
