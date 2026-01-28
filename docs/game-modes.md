@@ -70,7 +70,7 @@ If you are connecting to a remote server, you need to know the IP address and po
 To run the client and connect to the server, replace `"127.0.0.1"` in the config file with the IP address of the server.
 
 ```bash
-python -m client
+uv run python -m client
 ```
 
 Keep in mind that events are not being processed when the pygame title bar is dragged due to a pygame limitation. Doing so

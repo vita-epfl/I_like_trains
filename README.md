@@ -34,8 +34,15 @@ For detailed documentation, please refer to the [docs](/docs) directory:
 git clone https://github.com/vita-epfl/I_like_trains.git
 cd I_like_trains
 
+# Install uv (if not already installed)
+# On macOS and Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# On Windows:
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
 # Install dependencies
-pip install -r requirements.txt
+uv sync
 ```
 
 ### Setup your config file
@@ -78,7 +85,7 @@ This will create your agent file that you'll modify to implement your train's be
 ### Run the client
 
 ```bash
-python -m client
+uv run python -m client
 ```
 
 For more detailed setup instructions, see the [Setup Guide](/docs/setup.md).

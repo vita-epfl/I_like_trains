@@ -17,20 +17,20 @@
 There are several ways to play and test your agent:
 
 1. **Connect to the remote server with two clients**:
-   - Start two clients in two different terminals using `python -m client`
+   - Start two clients in two different terminals using `uv run python -m client`
    - Both clients will join the same room
    - **Pros**: Tests your agent in a real network environment similar to the final evaluation
    - **Cons**: Requires the remote server to be available and not busy
 
 2. **Run a local server + two clients**:
-   - Start a local server in one terminal: `python -m server`
-   - Start two clients in two different terminals: `python -m client`
+   - Start a local server in one terminal: `uv run python -m server`
+   - Start two clients in two different terminals: `uv run python -m client`
    - **Pros**: Allows testing without depending on remote server availability, and an easier debugging process
    - **Cons**: Requires managing multiple terminals
 
 3. **Run a local server + an observer client**:
    - Configure `config.json` to use `"game_mode": "observer"`
-   - Run `python -m client`
+   - Run `uv run python -m client`
    - **Pros**: Easiest way to test multiple agent implementations against each other and choose the best one
    - **Cons**: Doesn't test network robustness of your implementation
 
