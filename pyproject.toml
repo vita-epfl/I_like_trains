@@ -1,0 +1,23 @@
+[project]
+name = "i-like-trains"
+version = "0.1.0"
+description = "A multiplayer, real-time, network game where trains controlled by computer programs compete"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "annotated-types==0.7.0",
+    "pydantic==2.11.2",
+    "pydantic-core==2.33.1",
+    "pygame==2.6.1",
+    "ruff==0.11.3",
+    "typing-inspection==0.4.0",
+    "typing-extensions==4.13.1",
+    "pytz==2025.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["client", "server", "common", "single_process"]
