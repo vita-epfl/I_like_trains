@@ -86,3 +86,8 @@ class ServerConfig(BaseModel):
     # When True, each room runs in a separate process, bypassing the Python GIL
     # for better performance with many concurrent clients.
     use_multiprocessing: bool = False
+
+    # Performance profiling settings
+    enable_profiling: bool = False
+    profiling_output_dir: str = "profiling_results"
+    profiling_interval_seconds: float = 1.0

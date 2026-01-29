@@ -15,6 +15,7 @@ dependencies = [
     "pytz==2025.2",
     "tqdm>=4.67.1",
     "pandas>=3.0.0",
+    "psutil>=6.1.0",
 ]
 
 [build-system]
