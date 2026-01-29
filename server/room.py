@@ -1,15 +1,27 @@
-import json
+from __future__ import annotations
+
 import logging
 import random
 import threading
 import time
 from tqdm import tqdm
 
-import os
-
 from common.server_config import ServerConfig
 from common import stats_manager
 from common.constants import REFERENCE_TICK_RATE
+from common.messages import (
+    GameStartedSuccessMessage,
+    StateMessage,
+    GameOverMessage,
+    GameOverData,
+    FinalScoreEntry,
+    WaitingRoomMessage,
+    WaitingRoomData,
+    InitialStateMessage,
+    InitialStateData,
+    SpawnSuccessMessage,
+    RespawnFailedMessage,
+)
 
 from server.game import Game
 from server.ai_client import AIClient
@@ -140,7 +152,7 @@ class Room:
         logger.debug(f"Clients in room {self.id}: {self.clients}")
 
         # Send game_started_success message - Moved before the grading mode check
-        response = {"type": "game_started_success"}
+        response = GameStartedSuccessMessage()
         # Send response to all clients
         for client_addr in list(self.clients.keys()):
             try:
@@ -152,7 +164,7 @@ class Room:
                 ):
                     continue
                 self.server_socket.sendto(
-                    (json.dumps(response) + "\n").encode(), client_addr
+                    response.to_json().encode(), client_addr
                 )
             except Exception as e:
                 logger.error(f"Error sending start success to client: {e}")
@@ -251,15 +263,15 @@ class Room:
                 self.game.last_remaining_time = remaining_game_time
 
             # Create the data packet
-            state_data = {"type": "state", "data": state}
+            state_message = StateMessage(data=state)
 
             if state:  # If data has been modified
                 # Update all AI clients
                 for ai_client in self.ai_clients.values():
-                    ai_client.update_state(state_data)
+                    ai_client.update_state(state_message.model_dump())
                 
                 # Send the state to all clients
-                state_json = json.dumps(state_data) + "\n"
+                state_json = state_message.to_json()
                 for client_addr in list(self.clients.keys()):
                     try:
                         # Skip AI clients - they don't need network messages
@@ -565,18 +577,17 @@ class Room:
         #     self.game.high_score_all_time.save()
 
         # Create game over message
-        game_over_data = {
-            "type": "game_over",
-            "data": {
-                "message": "Game is over. Time limit reached.",
-                "final_scores": final_scores,
-                "duration": self.config.game_duration_seconds,
-                "best_scores": self.game.best_scores,
-            },
-        }
+        game_over_message = GameOverMessage(
+            data=GameOverData(
+                message="Game is over. Time limit reached.",
+                final_scores=[FinalScoreEntry(**score) for score in final_scores],
+                duration=self.config.game_duration_seconds,
+                best_scores=self.game.best_scores,
+            )
+        )
 
         # Send to all clients
-        state_json = json.dumps(game_over_data) + "\n"
+        state_json = game_over_message.to_json()
         for client_addr in list(self.clients.keys()):
             try:
                 # Skip AI clients - they don't need network messages
@@ -690,18 +701,17 @@ class Room:
                         last_update = current_time
                         continue
                     
-                    waiting_room_data = {
-                        "type": "waiting_room",
-                        "data": {
-                            "room_id": self.id,
-                            "players": list(self.get_players()),
-                            "nb_players": self.nb_players_max,
-                            "game_started": self.game_thread is not None,
-                            "waiting_time": int(remaining_time),
-                        },
-                    }
+                    waiting_room_message = WaitingRoomMessage(
+                        data=WaitingRoomData(
+                            room_id=self.id,
+                            players=list(self.get_players()),
+                            nb_players=self.nb_players_max,
+                            game_started=self.game_thread is not None,
+                            waiting_time=int(remaining_time),
+                        )
+                    )
 
-                    state_json = json.dumps(waiting_room_data) + "\n"
+                    state_json = waiting_room_message.to_json()
                     for client_addr in list(self.clients.keys()):
                         try:
                             # Skip AI clients - they don't need network messages
@@ -729,15 +739,14 @@ class Room:
     def broadcast_game_state(self):
         """Thread that periodically sends the game state to clients"""
         # Send initial state to all clients
-        initial_state = {
-            "type": "initial_state",
-            "data": {
-                "game_life_time": self.config.game_duration_seconds,
-                "start_time": time.time(),  # Send server start time for synchronization
-            },
-        }
+        initial_state_message = InitialStateMessage(
+            data=InitialStateData(
+                game_life_time=self.config.game_duration_seconds,
+                start_time=time.time(),  # Send server start time for synchronization
+            )
+        )
 
-        initial_state_json = json.dumps(initial_state) + "\n"
+        initial_state_json = initial_state_message.to_json()
         for client_addr in list(self.clients.keys()):
             logger.debug(f"Sending initial state to {client_addr}")
             try:
@@ -773,10 +782,10 @@ class Room:
                             self.game.last_remaining_time = remaining_seconds
 
                         # Create the data packet
-                        state_data = {"type": "state", "data": state}
+                        state_message = StateMessage(data=state)
 
                         # Send the state to all clients
-                        state_json = json.dumps(state_data) + "\n"
+                        state_json = state_message.to_json()
                         for client_addr in list(self.clients.keys()):
                             try:
                                 # Skip AI clients - they don't need network messages
@@ -920,12 +929,11 @@ class Room:
             )
 
             # Notify clients about the train rename
-            state_data = {
-                "type": "state",
-                "data": {"rename_train": [train_nickname_to_replace, ai_nickname]},
-            }
+            rename_message = StateMessage(
+                data={"rename_train": [train_nickname_to_replace, ai_nickname]}
+            )
 
-            state_json = json.dumps(state_data) + "\n"
+            state_json = rename_message.to_json()
             # Iterate over a copy of the client addresses to avoid issues if the list changes
             # Only send to non-AI clients
             for client_addr in list(self.clients.keys()):
@@ -957,9 +965,9 @@ class Room:
             state = self.game.get_state()
 
             # Create the data packet
-            state_data = {"type": "state", "data": state}
+            state_message = StateMessage(data=state)
 
-            self.ai_clients[ai_nickname].update_state(state_data)
+            self.ai_clients[ai_nickname].update_state(state_message.model_dump())
 
         else:
             logger.warning(
@@ -981,17 +989,14 @@ class Room:
                 continue
 
             if self.game.add_train(nickname):
-                response = {"type": "spawn_success", "nickname": nickname}
+                response = SpawnSuccessMessage(nickname=nickname)
                 self.server_socket.sendto(
-                    (json.dumps(response) + "\n").encode(), client_addr
+                    response.to_json().encode(), client_addr
                 )
             else:
                 logger.warning(f"Failed to spawn train {nickname}")
                 # Inform the client of the failure
-                response = {
-                    "type": "respawn_failed",
-                    "message": "Failed to spawn train",
-                }
+                response = RespawnFailedMessage(message="Failed to spawn train")
                 self.server_socket.sendto(
-                    (json.dumps(response) + "\n").encode(), client_addr
+                    response.to_json().encode(), client_addr
                 )

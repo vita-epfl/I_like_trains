@@ -4,7 +4,6 @@ This module provides an AI client that can control trains on the server side
 """
 
 import logging
-import json
 from server.passenger import Passenger
 import importlib
 
@@ -117,10 +116,6 @@ class AIClient:
 
     def update_state(self, state_data):
         """Update the state from the game"""
-        # Get the serialized state data from the game
-        state_data_json = json.dumps(state_data)
-        state_data = json.loads(state_data_json)
-
         # Extract the actual state data from the nested structure
         if "type" in state_data and state_data["type"] == "state" and "data" in state_data:
             # Extract data from the nested structure
