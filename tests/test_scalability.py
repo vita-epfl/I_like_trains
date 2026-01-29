@@ -16,6 +16,8 @@ import json
 import sys
 import os
 import random
+from datetime import datetime
+from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -675,8 +677,19 @@ class ScalabilityTests:
         self._print_summary()
         return self.results
     
-    def _print_summary(self):
-        """Print detailed summary of all test results"""
+    def _print_summary(self, output_file: str = None):
+        """Print detailed summary of all test results and optionally save to file.
+        
+        Args:
+            output_file: Optional path to save summary. If None, auto-generates timestamped file.
+        """
+        # Build summary lines
+        lines = []
+        lines.append("=" * 80)
+        lines.append("  SCALABILITY TEST SUMMARY")
+        lines.append("=" * 80)
+        
+        # Also print to console
         print("\n" + "="*80)
         print("  SCALABILITY TEST SUMMARY")
         print("="*80)
@@ -831,6 +844,49 @@ class ScalabilityTests:
             print("\n  No significant bottlenecks detected.")
 
 
+    def save_summary_to_file(self, output_dir: str = None):
+        """Save the summary to a timestamped file in the summaries directory.
+        
+        Args:
+            output_dir: Directory to save to. Defaults to tests/summaries/
+            
+        Returns:
+            Path to the saved file
+        """
+        import io
+        import sys
+        
+        # Determine output directory
+        if output_dir is None:
+            output_dir = Path(__file__).parent / "summaries"
+        else:
+            output_dir = Path(output_dir)
+        
+        # Create directory if it doesn't exist
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate timestamped filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"scalability_{timestamp}.md"
+        filepath = output_dir / filename
+        
+        # Capture print output
+        old_stdout = sys.stdout
+        sys.stdout = captured = io.StringIO()
+        
+        try:
+            self._print_summary()
+        finally:
+            sys.stdout = old_stdout
+        
+        # Write to file
+        with open(filepath, 'w') as f:
+            f.write(captured.getvalue())
+        
+        print(f"\n  Summary saved to: {filepath}")
+        return filepath
+
+
 def run_scalability_tests(base_port: int = 16000, duration: float = 15.0, 
                           player_counts: list = None, room_count: int = 20, 
                           players_per_room: int = 4):
@@ -902,6 +958,17 @@ Examples:
         action="store_true",
         help="Only run multi-room tests"
     )
+    parser.add_argument(
+        "--save", "-s",
+        action="store_true",
+        help="Save summary to tests/summaries/ with timestamp"
+    )
+    parser.add_argument(
+        "--output", "-o",
+        type=str,
+        default=None,
+        help="Custom output directory for summary file"
+    )
     
     args = parser.parse_args()
     
@@ -921,3 +988,7 @@ Examples:
             tests.test_multiple_rooms(room_count=args.rooms, players_per_room=args.per_room)
     
     tests._print_summary()
+    
+    # Save to file if requested
+    if args.save or args.output:
+        tests.save_summary_to_file(args.output)

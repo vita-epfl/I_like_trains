@@ -10,6 +10,8 @@ class Passenger:
         self.game = game
         self.position = self.get_safe_spawn_position()
         self.value = self.game.random.randint(1, self.game.config.max_passengers)
+        self._dirty = True  # Track if passenger data has changed
+        self._id = id(self)  # Unique identifier for delta updates
 
     def respawn(self):
         """
@@ -18,6 +20,7 @@ class Passenger:
         new_pos = self.get_safe_spawn_position()
         self.position = new_pos
         self.value = self.game.random.randint(1, self.game.config.max_passengers)
+        self._dirty = True
         self.game._dirty["passengers"] = True
 
     def get_safe_spawn_position(self):
@@ -80,5 +83,24 @@ class Passenger:
 
         return True
 
-    def to_dict(self):
-        return {"position": self.position, "value": self.value}
+    def to_dict(self, include_id: bool = False):
+        """Convert passenger to dictionary. Optionally include ID for delta updates."""
+        data = {"position": self.position, "value": self.value}
+        if include_id:
+            data["id"] = self._id
+        return data
+    
+    def to_dict_if_dirty(self, include_id: bool = True):
+        """Return dict only if passenger has changed, then clear dirty flag."""
+        if self._dirty:
+            self._dirty = False
+            data = {"position": self.position, "value": self.value}
+            if include_id:
+                data["id"] = self._id
+            return data
+        return None
+    
+    def mark_dirty(self):
+        """Mark passenger as needing to be sent to clients."""
+        self._dirty = True
+        self.game._dirty["passengers"] = True

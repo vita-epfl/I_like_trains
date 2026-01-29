@@ -11,7 +11,12 @@ import socket
 import json
 import time
 import queue
+import zlib
+import base64
 from typing import Dict, Any, Optional
+
+# Compression threshold in bytes - messages larger than this will be compressed
+COMPRESSION_THRESHOLD = 1024  # 1KB
 
 logger = logging.getLogger(__name__)
 
@@ -322,8 +327,26 @@ class RoomProcessRunner:
         
         self.logger.info(f"RoomProcessRunner initialized for room {room_id}")
     
-    def _send_to_client(self, addr: tuple, data: str):
-        """Send data to a client via the outbound queue"""
+    def _send_to_client(self, addr: tuple, data: str, compress: bool = True):
+        """Send data to a client via the outbound queue.
+        
+        Args:
+            addr: Client address tuple
+            data: JSON string data to send
+            compress: If True, compress large messages (> COMPRESSION_THRESHOLD)
+        """
+        # Optionally compress large messages
+        if compress and len(data) > COMPRESSION_THRESHOLD:
+            try:
+                compressed = zlib.compress(data.encode(), level=6)
+                # Only use compression if it actually reduces size
+                if len(compressed) < len(data) * 0.8:  # At least 20% reduction
+                    # Wrap compressed data with marker
+                    compressed_b64 = base64.b64encode(compressed).decode()
+                    data = json.dumps({"_compressed": True, "data": compressed_b64}) + "\n"
+            except Exception as e:
+                self.logger.debug(f"Compression failed, sending uncompressed: {e}")
+        
         self.outbound_queue.put({
             'type': 'send_to_client',
             'addr': list(addr),  # Convert tuple to list for JSON serialization

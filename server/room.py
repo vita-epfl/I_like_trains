@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import random
 import threading
 import time
+import zlib
+
 from tqdm import tqdm
 
 from common.server_config import ServerConfig
@@ -29,6 +33,33 @@ from server.ai_client import AIClient
 # Configure logger
 logger = logging.getLogger("server.room")
 # Log level will be set by the server.py setup_server_logger function
+
+# Compression threshold in bytes - messages larger than this will be compressed
+COMPRESSION_THRESHOLD = 1024  # 1KB
+
+
+def compress_message(data: str) -> str:
+    """Compress a message if it exceeds the threshold.
+    
+    Args:
+        data: JSON string to potentially compress
+        
+    Returns:
+        Original data or compressed wrapper with _compressed marker
+    """
+    if len(data) <= COMPRESSION_THRESHOLD:
+        return data
+    
+    try:
+        compressed = zlib.compress(data.encode(), level=6)
+        # Only use compression if it actually reduces size by at least 20%
+        if len(compressed) < len(data) * 0.8:
+            compressed_b64 = base64.b64encode(compressed).decode()
+            return json.dumps({"_compressed": True, "data": compressed_b64}) + "\n"
+    except Exception as e:
+        logger.debug(f"Compression failed, sending uncompressed: {e}")
+    
+    return data
 
 # List of names for AI-controlled clients
 AI_NAMES = [
@@ -270,8 +301,9 @@ class Room:
                 for ai_client in self.ai_clients.values():
                     ai_client.update_state(state_message.model_dump())
                 
-                # Send the state to all clients
+                # Send the state to all clients (with optional compression)
                 state_json = state_message.to_json()
+                compressed_json = compress_message(state_json)
                 for client_addr in list(self.clients.keys()):
                     try:
                         # Skip AI clients - they don't need network messages
@@ -283,7 +315,7 @@ class Room:
                             continue
 
                         self.server_socket.sendto(
-                            state_json.encode(), client_addr
+                            compressed_json.encode(), client_addr
                         )
                     except Exception as e:
                         logger.error(f"Error sending state to client: {e}")
@@ -784,8 +816,9 @@ class Room:
                         # Create the data packet
                         state_message = StateMessage(data=state)
 
-                        # Send the state to all clients
+                        # Send the state to all clients (with optional compression)
                         state_json = state_message.to_json()
+                        compressed_json = compress_message(state_json)
                         for client_addr in list(self.clients.keys()):
                             try:
                                 # Skip AI clients - they don't need network messages
@@ -797,7 +830,7 @@ class Room:
                                     continue
 
                                 self.server_socket.sendto(
-                                    state_json.encode(), client_addr
+                                    compressed_json.encode(), client_addr
                                 )
                             except Exception as e:
                                 logger.error(f"Error sending state to client: {e}")

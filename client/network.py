@@ -10,6 +10,8 @@ import json
 import logging
 import threading
 import time
+import zlib
+import base64
 from typing import TYPE_CHECKING, Any
 
 from common.version import EXPECTED_CLIENT_VERSION
@@ -173,6 +175,17 @@ class NetworkManager:
 
                     try:
                         message_data = json.loads(message)
+                        
+                        # Handle compressed messages
+                        if message_data.get("_compressed"):
+                            try:
+                                compressed_data = base64.b64decode(message_data["data"])
+                                decompressed = zlib.decompress(compressed_data).decode()
+                                message_data = json.loads(decompressed)
+                            except Exception as e:
+                                logger.error(f"Failed to decompress message: {e}")
+                                continue
+                        
                         message_type = message_data.get("type")
 
                         if message_type == "state":

@@ -117,9 +117,20 @@ class Game:
             state["cell_size"] = self.cell_size
             self._dirty["cell_size"] = False
 
-        # Add passengers if modified
+        # Add passengers if modified - only send dirty passengers for efficiency
         if self._dirty["passengers"]:
-            state["passengers"] = [p.to_dict() for p in self.passengers]
+            dirty_passengers = []
+            for p in self.passengers:
+                p_data = p.to_dict_if_dirty(include_id=True)
+                if p_data:
+                    dirty_passengers.append(p_data)
+            
+            # If we have dirty passengers, send them; otherwise send full list on first update
+            if dirty_passengers:
+                state["passengers"] = dirty_passengers
+            else:
+                # Fallback: send all passengers (e.g., on initial state)
+                state["passengers"] = [p.to_dict() for p in self.passengers]
             self._dirty["passengers"] = False
 
         # Add modified trains
