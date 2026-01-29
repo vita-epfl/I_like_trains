@@ -27,11 +27,23 @@ class Config(BaseModel):
         of calling it on a Config's instance.
         """
 
-        with open(filename, "r") as f:
-            try:
-                return Config.model_validate_json("".join(f))
-            except pydantic_core._pydantic_core.ValidationError as e:
-                print(
-                    f"Failed to parse {filename}, check your changes.", file=sys.stderr
-                )
-                raise e
+        try:
+            with open(filename, "r") as f:
+                try:
+                    return Config.model_validate_json("".join(f))
+                except pydantic_core._pydantic_core.ValidationError as e:
+                    print(
+                        f"Failed to parse {filename}, check your changes.", file=sys.stderr
+                    )
+                    raise e
+        except FileNotFoundError:
+            print(
+                f"\nError: Configuration file '{filename}' not found.\n\n"
+                f"Please copy the template file to create your config:\n"
+                f"  - On Linux/MacOS/Unix: cp config.json.template config.json\n"
+                f"  - On Windows (Command Prompt): copy config.json.template config.json\n"
+                f"  - On Windows (PowerShell): Copy-Item -Path config.json.template -Destination config.json\n\n"
+                f"See the README.md for more details.\n",
+                file=sys.stderr
+            )
+            sys.exit(1)

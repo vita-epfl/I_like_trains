@@ -15,10 +15,22 @@ You can also use VS Code to clone the repo.
 
 Make sure you open the root folder (I_like_trains) in VS Code. If you have installed `'code'`, you can do `code .`.
 
-## 2. Install dependencies
+## 2. Install uv and dependencies
+
+First, install uv if you don't have it already:
 
 ```bash
-pip install -r requirements.txt
+# On macOS and Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# On Windows:
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then install the project dependencies:
+
+```bash
+uv sync
 ```
 
 ## 3. Setup your config file
@@ -60,8 +72,8 @@ This will create your agent file that you'll modify to implement your train's be
 
 ## 5. (Optional) Start a local server for testing
 
-You can start a local server by running `python -m server` if you want to test the client locally. This will start a server on `0.0.0.0:5555` (the host set in the configuration file).
-Then, open another terminal, go to the project folder, and run `python -m client config.json` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
+You can start a local server by running `uv run python -m server` if you want to test the client locally. This will start a server on `0.0.0.0:5555` (the host set in the configuration file).
+Then, open another terminal, go to the project folder, and run `uv run python -m client config.json` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
 
 This allows:
 - You to connect locally with your own client
