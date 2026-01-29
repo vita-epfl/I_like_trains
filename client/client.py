@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pygame
 import logging
 import time
@@ -5,6 +7,7 @@ import threading
 import sys
 import importlib
 import random
+from typing import Any
 
 from client.network import NetworkManager
 from client.renderer import Renderer
@@ -12,7 +15,8 @@ from client.event_handler import EventHandler
 from client.game_state import GameState
 
 from common.config import Config
-from common.client_config import GameMode
+from common.client_config import ClientConfig, GameMode
+from common.base_agent import BaseAgent
 from common.constants import REFERENCE_TICK_RATE
 
 
@@ -28,10 +32,10 @@ logger = logging.getLogger("client")
 class Client:
     """Main client class"""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config) -> None:
         """Initialize the client"""
-        self.config = config.client
-        self.game_mode = self.config.game_mode
+        self.config: ClientConfig = config.client
+        self.game_mode: GameMode = self.config.game_mode
 
         # If we launch an observer, we want the host to be local_host, otherwise
         if self.game_mode == GameMode.OBSERVER:
@@ -42,56 +46,56 @@ class Client:
             logger.info(f"Client mode: connecting to {host}")
 
         # Initialize state variables
-        self.running = True
-        self.is_dead = False
-        self.waiting_for_respawn = False
-        self.death_time = 0
-        self.respawn_cooldown = 0
-        self.last_spawn_request_time = 0
-        self.is_initialized = False
-        self.in_waiting_room = True
-        self.lock = threading.Lock()
+        self.running: bool = True
+        self.is_dead: bool = False
+        self.waiting_for_respawn: bool = False
+        self.death_time: float = 0
+        self.respawn_cooldown: float = 0
+        self.last_spawn_request_time: float = 0
+        self.is_initialized: bool = False
+        self.in_waiting_room: bool = True
+        self.lock: threading.Lock = threading.Lock()
 
         # Game over variables
-        self.game_over = False
-        self.game_over_data = None
-        self.best_scores = {}
-        self.final_scores = []
+        self.game_over: bool = False
+        self.game_over_data: dict[str, Any] | None = None
+        self.best_scores: dict[str, int] = {}
+        self.final_scores: list[dict[str, Any]] = []
 
         # Name verification variables
-        self.name_check_received = False
-        self.name_check_result = False
+        self.name_check_received: bool = False
+        self.name_check_result: bool = False
 
         # Sciper verification variables
-        self.sciper_check_received = False
-        self.sciper_check_result = False
+        self.sciper_check_received: bool = False
+        self.sciper_check_result: bool = False
 
         # Game data
-        self.trains = {}
-        self.passengers = []
-        self.delivery_zone = {}
+        self.trains: dict[str, dict[str, Any]] = {}
+        self.passengers: list[dict[str, Any]] = []
+        self.delivery_zone: dict[str, Any] = {}
 
         # TODO(alok): delete self.cell_size, use self.config.cell_size everywhere
-        self.cell_size = 0
-        self.game_width = 200  # Initial game area width
-        self.game_height = 200  # Initial game area height
+        self.cell_size: int = 0
+        self.game_width: int = 200  # Initial game area width
+        self.game_height: int = 200  # Initial game area height
 
         # Space between game area and leaderboard
-        self.game_screen_padding = 20
-        self.leaderboard_width = self.config.leaderboard_width
-        self.leaderboard_height = 2 * self.game_screen_padding + self.game_height
+        self.game_screen_padding: int = 20
+        self.leaderboard_width: int = self.config.leaderboard_width
+        self.leaderboard_height: int = 2 * self.game_screen_padding + self.game_height
 
-        self.leaderboard_data = []
-        self.waiting_room_data = None
+        self.leaderboard_data: list[dict[str, Any]] = []
+        self.waiting_room_data: dict[str, Any] | None = None
 
-        self.screen_width = 380
-        self.screen_height = 240 
+        self.screen_width: int = 380
+        self.screen_height: int = 240 
 
-        self.nb_players = 0
+        self.nb_players: int = 0
 
         # Window creation flags and parameters
-        self.window_needs_update = False
-        self.window_update_params = {
+        self.window_needs_update: bool = False
+        self.window_update_params: dict[str, int] = {
             "width": self.screen_width,
             "height": self.screen_height,
         }
@@ -105,17 +109,17 @@ class Client:
         self.is_initialized = True
 
         # Initialize components
-        self.network = NetworkManager(self, host, self.config.port)
-        self.renderer = Renderer(self)
+        self.network: NetworkManager = NetworkManager(self, host, self.config.port)
+        self.renderer: Renderer = Renderer(self)
 
-        self.event_handler = EventHandler(self, self.game_mode)
-        self.game_state = GameState(self, self.game_mode)
+        self.event_handler: EventHandler = EventHandler(self, self.game_mode)
+        self.game_state: GameState = GameState(self, self.game_mode)
 
         # Initialize agent based on game mode
-        self.agent = None
+        self.agent: BaseAgent | None = None
 
         # Set nickname based on game mode
-        self.nickname = ""
+        self.nickname: str = ""
         if self.game_mode == GameMode.MANUAL:
             self.nickname = self.config.manual.nickname
             self.sciper = self.config.sciper
@@ -148,10 +152,10 @@ class Client:
                 module = importlib.import_module(module_path)
                 self.agent = module.Agent(self.nickname, self.network, timeout=1/REFERENCE_TICK_RATE)
 
-        self.ping_response_received = False
-        self.server_disconnected = False
+        self.ping_response_received: bool = False
+        self.server_disconnected: bool = False
 
-    def update_game_window_size(self, width=None, height=None):
+    def update_game_window_size(self, width: int | None = None, height: int | None = None) -> None:
         """Schedule window size update to be done in main thread"""
         with self.lock:
             if (width is not None):
@@ -161,7 +165,7 @@ class Client:
                 self.window_update_params["height"] = height
                 self.window_needs_update = True
 
-    def handle_window_updates(self):
+    def handle_window_updates(self) -> None:
         """Process any pending window updates in the main thread"""
         with self.lock:
             if self.window_needs_update:
@@ -173,7 +177,7 @@ class Client:
 
                 self.window_needs_update = False
 
-    def run(self):
+    def run(self) -> None:
         """Main client loop"""
         logger.info("Starting client loop")
         # Connect to server with timeout
@@ -240,7 +244,7 @@ class Client:
         self.network.disconnect()
         pygame.quit()
 
-    def update(self):
+    def update(self) -> None:
         """Update client state"""
         # Handle events
         self.event_handler.handle_events()
@@ -263,31 +267,31 @@ class Client:
 
         self.renderer.draw_game()
 
-    def handle_state_data(self, data):
+    def handle_state_data(self, data: dict[str, Any]) -> None:
         """Handle state data received from server"""
         self.game_state.handle_state_data(data)
 
-    def handle_death(self, data):
+    def handle_death(self, data: dict[str, Any]) -> None:
         """Handle cooldown data received from server"""
         self.game_state.handle_death(data)
 
-    def handle_game_status(self, data):
+    def handle_game_status(self, data: dict[str, Any]) -> None:
         """Handle game status received from server"""
         self.game_state.handle_game_status(data)
 
-    def handle_leaderboard_data(self, data):
+    def handle_leaderboard_data(self, data: Any) -> None:
         """Handle leaderboard data received from server"""
         self.game_state.handle_leaderboard_data(data)
 
-    def handle_waiting_room_data(self, data):
+    def handle_waiting_room_data(self, data: dict[str, Any]) -> None:
         """Handle waiting room data received from server"""
         self.game_state.handle_waiting_room_data(data)
 
-    def handle_game_over(self, data):
+    def handle_game_over(self, data: dict[str, Any]) -> None:
         """Handle game over data received from server"""
         self.game_state.handle_game_over(data)
 
-    def handle_initial_state(self, data):
+    def handle_initial_state(self, data: dict[str, Any]) -> None:
         """Handle initial state message from server"""
         logger.info("Received initial state from server")
 
@@ -299,7 +303,7 @@ class Client:
 
         logger.info(f"Game lifetime set to {self.game_life_time} seconds")
 
-    def handle_server_disconnection(self):
+    def handle_server_disconnection(self) -> None:
         """Handle server disconnection gracefully"""
         logger.warning("Server disconnected, shutting down client...")
         self.server_disconnected = True
@@ -332,7 +336,7 @@ class Client:
         # Fermer proprement
         self.cleanup()
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources before exiting"""
         logger.info("Cleaning up resources...")
 

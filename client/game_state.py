@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import json
 import logging
 import time
+from typing import TYPE_CHECKING, Any
 
 from common.client_config import GameMode
+
+if TYPE_CHECKING:
+    from client.client import Client
 
 
 logger = logging.getLogger("client.game_state")
@@ -11,12 +17,12 @@ logger = logging.getLogger("client.game_state")
 class GameState:
     """Class responsible for managing the game state"""
 
-    def __init__(self, client, game_mode):
+    def __init__(self, client: Client, game_mode: GameMode) -> None:
         """Initialize the game state manager with a reference to the client"""
-        self.client = client
-        self.game_mode = game_mode
+        self.client: Client = client
+        self.game_mode: GameMode = game_mode
 
-    def handle_state_data(self, data):
+    def handle_state_data(self, data: dict[str, Any]) -> None:
         """Handle game state data received from the server"""
 
         if not isinstance(data, dict):
@@ -123,7 +129,7 @@ class GameState:
             if not self.client.is_dead and train_exists:
                 self.client.agent.update_agent()
 
-    def handle_leaderboard_data(self, data):
+    def handle_leaderboard_data(self, data: Any) -> None:
         """Handle leaderboard data received from the server"""
         logger.info("Received leaderboard data")
         # Check if data is a string and try to parse it as JSON
@@ -151,7 +157,7 @@ class GameState:
         ):
             self.client.renderer.show_leaderboard_window(data)
 
-    def handle_waiting_room_data(self, data):
+    def handle_waiting_room_data(self, data: dict[str, Any]) -> None:
         """Handle waiting room data received from the server"""
         if not isinstance(data, dict):
             logger.error("Waiting room data is not a dictionary: " + str(data))
@@ -176,7 +182,7 @@ class GameState:
 
             self.client.leaderboard_height = nb_players * 10
 
-    def handle_death(self, data):
+    def handle_death(self, data: dict[str, Any]) -> None:
         """Handle cooldown data received from the server"""
         if not isinstance(data, dict):
             logger.error("Cooldown data is not a dictionary: " + str(data))
@@ -205,7 +211,7 @@ class GameState:
         self.client.waiting_for_respawn = True
         self.client.respawn_cooldown = data.get("remaining", 0)
 
-    def handle_game_status(self, data):
+    def handle_game_status(self, data: dict[str, Any]) -> None:
         """Gère la réception du statut du jeu"""
         game_started = data.get("game_started", False)
         if game_started:
@@ -215,7 +221,7 @@ class GameState:
             self.client.in_waiting_room = True
             logger.info("Game not started - entering waiting room")
 
-    def handle_server_message(self, message):
+    def handle_server_message(self, message: str) -> None:
         """Gère les messages reçus du serveur"""
         data = json.loads(message)
         message_type = data.get("type")
@@ -229,7 +235,7 @@ class GameState:
         else:
             logger.warning("Unknown message type received: " + str(message_type))
 
-    def handle_game_over(self, data):
+    def handle_game_over(self, data: dict[str, Any]) -> None:
         """Handle game over data received from the server"""
         try:
             logger.info("Game over received")

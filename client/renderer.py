@@ -2,11 +2,17 @@
 Graphics rendering module for the I Like Trains client
 """
 
+from __future__ import annotations
+
 import pygame
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from common.move import Move
+
+if TYPE_CHECKING:
+    from client.client import Client
 
 # Configure logger
 logger = logging.getLogger("client.renderer")
@@ -16,12 +22,12 @@ logger.setLevel(logging.DEBUG)
 class Renderer:
     """Class responsible for rendering the game"""
 
-    def __init__(self, client):
+    def __init__(self, client: Client) -> None:
         """Initialize renderer with a reference to the client"""
-        self.client = client
-        self.sorted_trains = []
+        self.client: Client = client
+        self.sorted_trains: list[tuple[str, int, int]] = []
 
-    def draw_game(self):
+    def draw_game(self) -> None:
         """Draws the game."""
         # Check if screen is available
         if not self.client.is_initialized or self.client.screen is None:
@@ -112,7 +118,7 @@ class Renderer:
         # Update display
         pygame.display.flip()
 
-    def draw_delivery_zone(self):
+    def draw_delivery_zone(self) -> None:
         # Draw delivery zone
         delivery_zone = self.client.delivery_zone
         if delivery_zone:
@@ -129,7 +135,7 @@ class Renderer:
             # Blit the surface onto the screen
             self.client.screen.blit(s, (x, y))
 
-    def draw_passengers(self):
+    def draw_passengers(self) -> None:
         """
         Draw passengers and their values
         """
@@ -174,7 +180,7 @@ class Renderer:
             )  # Position above passenger
             self.client.screen.blit(text, text_rect)
 
-    def draw_trains(self):
+    def draw_trains(self) -> None:
         """
         Draw trains and their wagons
         """
@@ -254,7 +260,7 @@ class Renderer:
                     ),
                 )
 
-    def draw_waiting_room(self):
+    def draw_waiting_room(self) -> None:
         """Display the waiting room screen"""
         # Check if screen is available
         if not self.client.is_initialized or self.client.screen is None:
@@ -348,7 +354,7 @@ class Renderer:
         # Update display
         pygame.display.flip()
 
-    def draw_death_screen(self):
+    def draw_death_screen(self) -> None:
         # If agent is dead, display respawn message with cooldown
 
         elapsed = time.time() - self.client.death_time
@@ -382,7 +388,7 @@ class Renderer:
             )
             self.client.screen.blit(text, text_rect)
 
-    def draw_leaderboard(self):
+    def draw_leaderboard(self) -> None:
         """Draw the leaderboard with train scores"""
         # Define leaderboard area
         leaderboard_rect = pygame.Rect(
@@ -627,7 +633,7 @@ class Renderer:
             )
             self.client.screen.blit(time_surface, time_text_rect)
 
-    def draw_game_over_screen(self):
+    def draw_game_over_screen(self) -> None:
         """Display the game over screen with final scores"""
         # Fill screen with a dark background
         overlay = pygame.Surface(

@@ -19,7 +19,8 @@ class Config(BaseModel):
     client: ClientConfig
     server: ServerConfig
 
-    def load(filename):
+    @staticmethod
+    def load(filename: str) -> "Config":
         """
         Loads a JSON config file and returns an instance of Config.
         note: this is a static method, call it with Config.load(...) instead

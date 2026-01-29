@@ -75,7 +75,21 @@ Copy-Item -Path common\agents\agent.py.template -Destination common\agents\agent
 
 This will create your agent file that you'll modify to implement your train's behavior. Make sure to update the SCIPERS list in the file with your actual SCIPER numbers.
 
-### Run the client
+### (Optional) Start a local server for testing
+
+You can start a local server by running `python -m server` if you want to test the client locally. This will start a server on `0.0.0.0:5555` (the host set in the configuration file config.json).
+Then, open another terminal, go to the project folder, and run `python -m client config.json` to connect to the local server. This is optional, but recommended for testing before connecting to the remote server.
+
+This allows:
+- You to connect locally with your own client
+- Other players to connect to your game if you share your IP address with them
+- This is useful for organizing your own competitions or testing with friends
+
+
+### Run the client (in a new terminal)
+
+This will try connecting to a server. If you have started a local server, it will connect to it. 
+Otherwise, if you set a distant ip and port in the config file, it will try to connect to the remote server (if running).
 
 ```bash
 python -m client
