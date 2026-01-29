@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import random
 import logging
 import math
+from typing import Any
 
 
 # Use the logger configured in server.py
@@ -12,10 +15,40 @@ class DeliveryZone:
     Represents the area where passengers must be dropped off in order to earn points.
 
     DeliveryZones are placed randomly. Their size depends on the number of players.
+
+    Coordinate System:
+        - The game uses a pixel-based coordinate system where (0, 0) is the TOP-LEFT corner.
+        - X increases to the RIGHT.
+        - Y increases DOWNWARD.
+
+    Attributes:
+        x (int): The X coordinate of the TOP-LEFT corner of the delivery zone (in pixels).
+        y (int): The Y coordinate of the TOP-LEFT corner of the delivery zone (in pixels).
+        width (int): The width of the delivery zone (in pixels), extending to the RIGHT from x.
+        height (int): The height of the delivery zone (in pixels), extending DOWNWARD from y.
+
+    The delivery zone occupies the rectangular area:
+        - From (x, y) at the top-left corner
+        - To (x + width, y + height) at the bottom-right corner (exclusive)
+
+    Example:
+        If x=100, y=50, width=60, height=40:
+        - Top-left corner: (100, 50)
+        - Top-right corner: (159, 50)
+        - Bottom-left corner: (100, 89)
+        - Bottom-right corner: (159, 89)
+        - A position (px, py) is inside if: x <= px < x+width AND y <= py < y+height
+
+    The `to_dict()` method returns:
+        {
+            "position": (x, y),  # Top-left corner coordinates
+            "width": width,       # Width in pixels
+            "height": height      # Height in pixels
+        }
     """
 
-    def __init__(self, game_width, game_height, cell_size, nb_players, random_gen=None):
-        self.random = random_gen if random_gen is not None else random
+    def __init__(self, game_width: int, game_height: int, cell_size: int, nb_players: int, random_gen: random.Random | None = None) -> None:
+        self.random: random.Random = random_gen if random_gen is not None else random
 
         # Calculate a factor based on square root for slower growth
         # Ensure nb_players is positive. Use sqrt + small linear term.
@@ -48,12 +81,25 @@ class DeliveryZone:
         # Ensure the upper bound is not negative
         upper_bound_y = max(0, max_y_offset)
 
-        self.y = cell_size * self.random.randint(0, upper_bound_y)
+        self.y: int = cell_size * self.random.randint(0, upper_bound_y)
 
-        logger.debug(f"Delivery zone bounds: ({self.x}, {self.y}, {self.x + self.width}, {self.y + self.height})")
+        logger.debug(f"Delivery zone: top-left=({self.x}, {self.y}), bottom-right=({self.x + self.width}, {self.y + self.height}), size={self.width}x{self.height}")
 
 
-    def contains(self, position):
+    def contains(self, position: tuple[int, int]) -> bool:
+        """
+        Check if a position is inside the delivery zone.
+
+        Args:
+            position: A tuple (x, y) representing the position to check (in pixels).
+
+        Returns:
+            True if the position is inside the delivery zone, False otherwise.
+
+        Note:
+            The check uses inclusive lower bounds and exclusive upper bounds:
+            x <= position_x < x + width AND y <= position_y < y + height
+        """
         x, y = position
         return (
             x >= self.x
@@ -62,7 +108,16 @@ class DeliveryZone:
             and y < self.y + self.height
         )
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Convert the delivery zone to a dictionary for network transmission.
+
+        Returns:
+            A dictionary with:
+                - "position": (x, y) tuple representing the TOP-LEFT corner (in pixels)
+                - "width": width of the zone in pixels (extends to the right)
+                - "height": height of the zone in pixels (extends downward)
+        """
         return {
             "height": self.height,
             "width": self.width,
