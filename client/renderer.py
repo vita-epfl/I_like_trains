@@ -26,6 +26,14 @@ class Renderer:
         """Initialize renderer with a reference to the client"""
         self.client: Client = client
         self.sorted_trains: list[tuple[str, int, int]] = []
+        self.leaderboard_dirty: bool = True
+        self.last_scores_hash: int = 0
+        self.leaderboard_update_counter: int = 0
+        self.max_leaderboard_entries: int = 15
+        
+        # Text rendering cache to avoid expensive font.render() calls
+        self.text_cache: dict[tuple, pygame.Surface] = {}
+        self.font_cache: dict[tuple, pygame.font.Font] = {}
 
     def draw_game(self) -> None:
         """Draws the game."""
@@ -110,7 +118,10 @@ class Renderer:
 
         self.draw_trains()
 
+        self.client.profiler.start_timer("render_leaderboard")
+        self.leaderboard_update_counter += 1
         self.draw_leaderboard()
+        self.client.profiler.end_timer("render_leaderboard")
 
         if self.client.is_dead and not self.client.in_waiting_room:
             self.draw_death_screen()
@@ -388,6 +399,24 @@ class Renderer:
             )
             self.client.screen.blit(text, text_rect)
 
+    def get_cached_text(self, text: str, font_size: int, color: tuple, bold: bool = False) -> pygame.Surface:
+        """Get cached rendered text surface to avoid expensive font.render() calls"""
+        # Convert color to tuple if it's a list (for hashability)
+        if isinstance(color, list):
+            color = tuple(color)
+        
+        cache_key = (text, font_size, color, bold)
+        
+        if cache_key not in self.text_cache:
+            font_key = (font_size, bold)
+            if font_key not in self.font_cache:
+                self.font_cache[font_key] = pygame.font.Font(None, font_size)
+            
+            font = self.font_cache[font_key]
+            self.text_cache[cache_key] = font.render(text, True, color)
+        
+        return self.text_cache[cache_key]
+
     def draw_leaderboard(self) -> None:
         """Draw the leaderboard with train scores"""
         # Define leaderboard area
@@ -422,8 +451,7 @@ class Renderer:
         )
         pygame.draw.rect(self.client.screen, (50, 50, 150), title_rect)
 
-        font_title = pygame.font.Font(None, 28)
-        title = font_title.render("LEADERBOARD", True, (255, 255, 255))
+        title = self.get_cached_text("LEADERBOARD", 28, (255, 255, 255))
         title_rect = title.get_rect(
             center=(
                 self.client.game_width
@@ -435,11 +463,10 @@ class Renderer:
         self.client.screen.blit(title, title_rect)
 
         # Add a header
-        header_font = pygame.font.Font(None, 24)
         header_y = 50
 
-        # Draw columns with distinct titles
-        rank_header = header_font.render("Rank", True, (0, 0, 100))
+        # Draw columns with distinct titles (using cached text)
+        rank_header = self.get_cached_text("Rank", 24, (0, 0, 100))
         self.client.screen.blit(
             rank_header,
             (
@@ -448,7 +475,7 @@ class Renderer:
             ),
         )
 
-        player_header = header_font.render("Player", True, (0, 0, 100))
+        player_header = self.get_cached_text("Player", 24, (0, 0, 100))
         self.client.screen.blit(
             player_header,
             (
@@ -457,7 +484,7 @@ class Renderer:
             ),
         )
 
-        score_header = header_font.render("Score", True, (0, 0, 100))
+        score_header = self.get_cached_text("Score", 24, (0, 0, 100))
         self.client.screen.blit(
             score_header,
             (
@@ -466,7 +493,7 @@ class Renderer:
             ),
         )
 
-        best_score_header = header_font.render("Best", True, (0, 0, 100))
+        best_score_header = self.get_cached_text("Best", 24, (0, 0, 100))
         self.client.screen.blit(
             best_score_header,
             (
@@ -493,29 +520,38 @@ class Renderer:
             2,
         )
 
-        if len(self.sorted_trains) != len(self.client.trains):
-            self.sorted_trains = []
+        # Only update sorted trains if scores have changed, train count changed, or every 10 frames
+        # This reduces expensive sorting operations from 60/sec to 6/sec
+        current_scores_hash = hash(tuple(sorted(self.client.best_scores.items())))
+        should_update = (
+            self.leaderboard_dirty or 
+            current_scores_hash != self.last_scores_hash or 
+            len(self.sorted_trains) != len(self.client.trains) or
+            self.leaderboard_update_counter % 10 == 0
+        )
+        
+        if should_update:
+            
+            # Get train data for leaderboard
+            self.sorted_trains = [(
+                    nickname,
+                    self.client.best_scores.get(nickname, 0),
+                    train_data.get("score", 0),
+                ) for nickname, train_data in self.client.trains.items()]
 
-        # Get train data for leaderboard
-        self.sorted_trains = [(
-                nickname,
-                self.client.best_scores.get(nickname, 0),
-                train_data.get("score", 0),
-            ) for nickname, train_data in self.client.trains.items()]
-
-        # Sort by best score in descending order
-        self.sorted_trains.sort(key=lambda x: x[1], reverse=True)
+            # Sort by best score in descending order
+            self.sorted_trains.sort(key=lambda x: x[1], reverse=True)
+            
+            self.last_scores_hash = current_scores_hash
+            self.leaderboard_dirty = False
 
         # Display players in leaderboard
-        player_font = pygame.font.Font(None, 22)
         y_offset = header_y + 30
 
-        for i, (nickname, best_score, current_score) in enumerate(
-            self.sorted_trains
-        ):
-            # Limit to 10 players in leaderboard
-            # if i >= 10:
-            #     break
+        # Limit to top N entries for performance
+        visible_entries = self.sorted_trains[:self.max_leaderboard_entries]
+        
+        for i, (nickname, best_score, current_score) in enumerate(visible_entries):
 
             # Determine color based on rank
             if i == 0:
@@ -553,8 +589,8 @@ class Renderer:
                     if nickname == self.client.nickname:
                         train_color = (0, 0, 255)  # Blue for player's train
 
-            # Display rank
-            rank_text = player_font.render(str(i + 1), True, rank_color)
+            # Display rank (cached)
+            rank_text = self.get_cached_text(str(i + 1), 22, rank_color)
             self.client.screen.blit(
                 rank_text,
                 (
@@ -565,8 +601,8 @@ class Renderer:
                 ),
             )
 
-            # Display player name with train color
-            name_text = player_font.render(nickname[:15], True, train_color)
+            # Display player name with train color (cached)
+            name_text = self.get_cached_text(nickname[:15], 22, train_color)
             self.client.screen.blit(
                 name_text,
                 (
@@ -577,8 +613,8 @@ class Renderer:
                 ),
             )
 
-            # Display current score
-            score_text = player_font.render(str(current_score), True, (0, 0, 0))
+            # Display current score (cached)
+            score_text = self.get_cached_text(str(current_score), 22, (0, 0, 0))
             self.client.screen.blit(
                 score_text,
                 (
@@ -589,8 +625,8 @@ class Renderer:
                 ),
             )
 
-            # Display best score
-            best_score_text = player_font.render(str(best_score), True, (0, 0, 0))
+            # Display best score (cached)
+            best_score_text = self.get_cached_text(str(best_score), 22, (0, 0, 0))
             self.client.screen.blit(
                 best_score_text,
                 (
@@ -602,6 +638,23 @@ class Renderer:
             )
 
             y_offset += 25
+
+        # Show indicator if there are more players not displayed
+        if len(self.sorted_trains) > self.max_leaderboard_entries:
+            hidden_count = len(self.sorted_trains) - self.max_leaderboard_entries
+            more_text = self.get_cached_text(
+                f"... and {hidden_count} more players",
+                22,
+                (100, 100, 100)
+            )
+            self.client.screen.blit(
+                more_text,
+                (
+                    self.client.game_width + 2 * self.client.game_screen_padding + 60,
+                    y_offset,
+                ),
+            )
+            y_offset += 30
 
         # Draw remaining time below the leaderboard
         if hasattr(self.client, "remaining_game_time"):
@@ -755,7 +808,7 @@ class Renderer:
 
             # Draw score
             score_text = font_scores.render(str(player_score), True, rank_color)
-            self.client.screen.blit(score_text, (col3_x + 50, y_offset))
+            self.client.screen.blit(score_text, (col3_x + 100, y_offset))
 
             y_offset += 40
 
