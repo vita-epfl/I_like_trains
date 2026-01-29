@@ -633,11 +633,19 @@ class Server:
         # Check if the name exists in any room
         name_available = True
         room = None  # Initialize room to None to avoid reference error
+        reason = None  # Initialize reason
 
         for room_id, current_room in self.rooms.items():
             room = current_room  # Keep a reference to the last room
             # Skip RoomProcessHandle objects (multiprocessing mode)
             if not hasattr(current_room, 'clients'):
+                # Check in RoomProcessHandle.clients for multiprocessing mode
+                if hasattr(current_room, 'clients') and isinstance(current_room.clients, dict):
+                    if name_to_check in current_room.clients.values():
+                        name_available = False
+                        reason = "name already in use"
+                        self.logger.debug(f"Name '{name_to_check}' found in multiprocessing room {room_id}")
+                        break
                 continue
             for client_addr, nickname in current_room.clients.items():
                 if nickname == name_to_check:
@@ -650,6 +658,7 @@ class Server:
                         continue
                     # Client is connected, name is not available
                     name_available = False
+                    reason = "name already in use"
                     self.logger.debug(f"Name '{name_to_check}' found in room {room_id}")
                     break
             if not name_available:
@@ -658,12 +667,13 @@ class Server:
         # Check if name not in the ai names (only if we have at least one room with AI_NAMES)
         if room and name_available and hasattr(room, 'AI_NAMES') and name_to_check in room.AI_NAMES:
             name_available = False
+            reason = "name reserved for AI"
 
-        # Check if name starts with "Bot " (invalid)
+        # Check if name starts with "staff" (invalid)
         if name_available and name_to_check.startswith("staff"):
             name_available = False
-            self.logger.debug(f"Name '{name_to_check}' starts with 'staff', not available")
             reason = "name starts with 'staff'"
+            self.logger.debug(f"Name '{name_to_check}' starts with 'staff', not available")
 
         if addr:
             response = NameCheckMessage(available=name_available, reason=reason if not name_available else None)
@@ -784,9 +794,10 @@ class Server:
         # Assign to a room
         selected_room = self.get_available_room()
         
-        # Handle multiprocessing mode differently
+        # Handle multiprocessing mode
         if self.use_multiprocessing and self.room_process_manager:
             from server.room_process import RoomProcessHandle
+            # Check if selected_room is a handle or if we need to check after creation
             if isinstance(selected_room, RoomProcessHandle):
                 # Add client via process manager
                 self.room_process_manager.add_client_to_room(
@@ -810,6 +821,13 @@ class Server:
                 }
                 self.server_socket.sendto((json.dumps(response) + "\n").encode(), addr)
                 return
+            
+            # If selected_room is None, it will be created by get_available_room fallback
+            # and will be a RoomProcessHandle, so we need to handle it
+            if selected_room is None:
+                # This shouldn't happen since get_available_room creates a room
+                # but just in case, we handle it here
+                pass
         
         # Standard threading mode
         selected_room.clients[addr] = nickname
@@ -1447,6 +1465,11 @@ class Server:
 
         # --- Shutdown sequence starts here, after the loop ---
         self.logger.info("Shutting down server...")
+
+        # 0. Shutdown room processes if in multiprocessing mode
+        if self.use_multiprocessing and self.room_process_manager:
+            self.logger.info("Shutting down room processes...")
+            self.room_process_manager.shutdown()
 
         # 1. Disconnect clients (must happen before closing the socket)
         client_addresses = list(self.addr_to_name.keys())  # Copy keys
