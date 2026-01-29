@@ -114,15 +114,37 @@ python -m tests.test_scalability --players 5 10 20 50 100 --rooms 20 --per-room 
 | `--per-room` | Players per room for multi-room test (default: 4) |
 | `--single-room-only` | Only run single room tests |
 | `--multi-room-only` | Only run multi-room tests |
+| `-s, --save` | Save summary to `tests/summaries/` with timestamp |
+| `-o, --output` | Custom output directory for summary file |
 
 ## Metrics Collected
 
 ### Scalability Tests
+
+**Basic Metrics:**
 - **Connected count**: Number of clients that successfully connected
 - **Game started count**: Number of clients that received game start confirmation
 - **State update Hz**: Frequency of game state updates received by clients
 - **Average connection time**: Time to establish connection (ms)
 - **Error count**: Number of connection or communication errors
+
+**Bandwidth Metrics:**
+- **Total bytes received/sent**: Total data transferred during test
+- **Bandwidth (kbps)**: Data rate in kilobits per second
+- **Avg bytes per client**: Average data received per connected client
+
+**State Update Metrics:**
+- **Avg/Min/Max interval**: Time between state updates (ms)
+- **Jitter (stdev)**: Variation in state update timing (ms)
+- **Avg state size**: Average size of state messages (bytes)
+
+**Latency Metrics (RTT):**
+- **Avg/Min/Max RTT**: Round-trip time for ping/pong (ms)
+- **RTT jitter**: Variation in round-trip time (ms)
+
+**Per-Client Variance:**
+- **Min/Max updates**: Range of state updates received across clients
+- **Stdev**: Standard deviation of updates (detects unfair scheduling)
 
 ### Live Integration Tests
 - **Connection time**: Time to connect a single client
@@ -144,4 +166,19 @@ python -m tests.test_scalability --players 50 100 --rooms 0
 
 # Test many small rooms
 python -m tests.test_scalability --multi-room-only --rooms 50 --per-room 2
+
+# Save results to file for comparison
+python -m tests.test_scalability --save
+
+# Save to custom directory
+python -m tests.test_scalability --save --output ./my_results/
 ```
+
+## Performance Optimizations
+
+The server includes several performance optimizations:
+
+1. **Dirty State Tracking**: Only sends game state when data has changed
+2. **Passenger Delta Updates**: Only sends passengers that have been modified (not all passengers every frame)
+3. **Message Compression**: Large messages (>1KB) are automatically compressed with zlib if compression achieves 20%+ reduction
+4. **Multiprocessing Mode**: Rooms can run in separate processes to bypass Python GIL (enable with `use_multiprocessing: true` in config)
