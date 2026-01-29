@@ -52,7 +52,7 @@ class ScalabilityResult:
 
 
 class ScalabilityTestClient:
-    """Lightweight test client for scalability measurements"""
+    """Lightweight test client for scalability measurements with detailed metrics"""
     
     def __init__(self, host: str, port: int, nickname: str, sciper: str):
         self.host = host
@@ -65,12 +65,33 @@ class ScalabilityTestClient:
         self.receive_thread = None
         self.connected = False
         self.game_started = False
-        self.messages_received = 0
-        self.state_updates_received = 0
-        self.last_state_time = 0
-        self.state_intervals = []
         self.connection_time = 0
         self.errors = []
+        
+        # Message counters
+        self.messages_received = 0
+        self.state_updates_received = 0
+        self.bytes_received = 0
+        self.bytes_sent = 0
+        
+        # Timing metrics
+        self.last_state_time = 0
+        self.state_intervals = []
+        self.first_state_time = 0
+        self.last_message_time = 0
+        
+        # State content metrics
+        self.state_sizes = []  # Size of each state message in bytes
+        self.train_counts = []  # Number of trains in each state
+        self.passenger_counts = []  # Number of passengers in each state
+        
+        # Latency tracking (ping-based)
+        self.ping_send_times = {}  # ping_id -> send_time
+        self.ping_rtts = []  # Round-trip times
+        
+        # Direction command tracking
+        self.directions_sent = 0
+        self.direction_send_times = []
         
     def connect(self, timeout: float = 10.0) -> bool:
         """Connect to server and send agent IDs"""
@@ -125,7 +146,9 @@ class ScalabilityTestClient:
             return False
         try:
             data = json.dumps(message) + "\n"
-            self.socket.sendto(data.encode(), self.server_addr)
+            encoded = data.encode()
+            self.bytes_sent += len(encoded)
+            self.socket.sendto(encoded, self.server_addr)
             return True
         except Exception as e:
             self.errors.append(f"Send error: {e}")
@@ -133,7 +156,15 @@ class ScalabilityTestClient:
     
     def send_direction(self, direction: list):
         """Send direction command"""
+        self.directions_sent += 1
+        self.direction_send_times.append(time.perf_counter())
         self._send_message({"action": "direction", "direction": direction})
+    
+    def send_ping(self):
+        """Send a ping to measure RTT"""
+        ping_id = str(random.randint(100000, 999999))
+        self.ping_send_times[ping_id] = time.perf_counter()
+        self._send_message({"type": "ping", "id": ping_id})
     
     def _receive_loop(self):
         """Receive messages from server"""
@@ -146,6 +177,8 @@ class ScalabilityTestClient:
                     continue
                 
                 receive_time = time.perf_counter()
+                self.bytes_received += len(data)
+                self.last_message_time = receive_time
                 messages = data.decode().split("\n")
                 
                 for msg in messages:
@@ -169,6 +202,18 @@ class ScalabilityTestClient:
                         
                         elif msg_type == "state":
                             self.state_updates_received += 1
+                            self.state_sizes.append(len(msg))
+                            
+                            # Track state content
+                            state_data = message.get("data", {})
+                            if "trains" in state_data:
+                                self.train_counts.append(len(state_data["trains"]))
+                            if "passengers" in state_data:
+                                self.passenger_counts.append(len(state_data["passengers"]))
+                            
+                            # Track timing
+                            if self.first_state_time == 0:
+                                self.first_state_time = receive_time
                             if self.last_state_time > 0:
                                 interval = receive_time - self.last_state_time
                                 self.state_intervals.append(interval)
@@ -176,6 +221,14 @@ class ScalabilityTestClient:
                         
                         elif msg_type == "ping":
                             self._send_message({"type": "pong"})
+                        
+                        elif msg_type == "pong":
+                            # Match with sent ping for RTT calculation
+                            for ping_id, send_time in list(self.ping_send_times.items()):
+                                rtt = receive_time - send_time
+                                self.ping_rtts.append(rtt)
+                                del self.ping_send_times[ping_id]
+                                break
                         
                         elif msg_type == "disconnect":
                             self.errors.append(f"Disconnected: {message.get('reason')}")
@@ -332,51 +385,156 @@ class ScalabilityTests:
         return clients
     
     def _collect_metrics(self, clients: list, duration: float) -> dict:
-        """Collect performance metrics from clients during test duration"""
+        """Collect detailed performance metrics from clients during test duration"""
         # Let the game run and collect data
         start_time = time.time()
+        ping_interval = 0.5  # Send pings every 0.5 seconds
+        last_ping_time = 0
         
-        # Simulate player activity
+        # Simulate player activity and measure latency
         directions = [[1, 0], [0, 1], [-1, 0], [0, -1]]
         while time.time() - start_time < duration:
+            current_time = time.time()
+            
             for client in clients:
                 if client.connected:
                     client.send_direction(random.choice(directions))
+                    
+                    # Periodically send pings to measure RTT
+                    if current_time - last_ping_time >= ping_interval:
+                        client.send_ping()
+            
+            if current_time - last_ping_time >= ping_interval:
+                last_ping_time = current_time
+            
             time.sleep(0.1)
         
-        # Collect metrics
+        # === Basic Metrics ===
         connected_count = sum(1 for c in clients if c.connected)
         game_started_count = sum(1 for c in clients if c.game_started)
         total_state_updates = sum(c.state_updates_received for c in clients)
         total_messages = sum(c.messages_received for c in clients)
         
-        # Calculate state update frequency
+        # === Bandwidth Metrics ===
+        total_bytes_received = sum(c.bytes_received for c in clients)
+        total_bytes_sent = sum(c.bytes_sent for c in clients)
+        avg_bytes_per_client = total_bytes_received / connected_count if connected_count > 0 else 0
+        bandwidth_recv_kbps = (total_bytes_received * 8 / 1000) / duration if duration > 0 else 0
+        bandwidth_sent_kbps = (total_bytes_sent * 8 / 1000) / duration if duration > 0 else 0
+        
+        # === State Update Metrics ===
         all_intervals = []
+        all_state_sizes = []
+        all_train_counts = []
+        all_passenger_counts = []
+        
         for c in clients:
             all_intervals.extend(c.state_intervals)
+            all_state_sizes.extend(c.state_sizes)
+            all_train_counts.extend(c.train_counts)
+            all_passenger_counts.extend(c.passenger_counts)
         
+        # State frequency
         avg_state_interval = statistics.mean(all_intervals) if all_intervals else 0
         state_hz = 1.0 / avg_state_interval if avg_state_interval > 0 else 0
         
-        # Connection times
+        # Jitter (variation in state intervals)
+        state_jitter_ms = statistics.stdev(all_intervals) * 1000 if len(all_intervals) > 1 else 0
+        min_interval_ms = min(all_intervals) * 1000 if all_intervals else 0
+        max_interval_ms = max(all_intervals) * 1000 if all_intervals else 0
+        
+        # State size stats
+        avg_state_size = statistics.mean(all_state_sizes) if all_state_sizes else 0
+        max_state_size = max(all_state_sizes) if all_state_sizes else 0
+        min_state_size = min(all_state_sizes) if all_state_sizes else 0
+        
+        # Game content stats
+        avg_train_count = statistics.mean(all_train_counts) if all_train_counts else 0
+        avg_passenger_count = statistics.mean(all_passenger_counts) if all_passenger_counts else 0
+        
+        # === Latency Metrics (RTT) ===
+        all_rtts = []
+        for c in clients:
+            all_rtts.extend(c.ping_rtts)
+        
+        avg_rtt_ms = statistics.mean(all_rtts) * 1000 if all_rtts else 0
+        min_rtt_ms = min(all_rtts) * 1000 if all_rtts else 0
+        max_rtt_ms = max(all_rtts) * 1000 if all_rtts else 0
+        rtt_jitter_ms = statistics.stdev(all_rtts) * 1000 if len(all_rtts) > 1 else 0
+        
+        # === Connection Metrics ===
         connection_times = [c.connection_time for c in clients if c.connection_time > 0]
         avg_connection_time = statistics.mean(connection_times) if connection_times else 0
+        max_connection_time = max(connection_times) if connection_times else 0
+        min_connection_time = min(connection_times) if connection_times else 0
         
-        # Errors
+        # === Command Metrics ===
+        total_directions_sent = sum(c.directions_sent for c in clients)
+        directions_per_second = total_directions_sent / duration if duration > 0 else 0
+        
+        # === Per-Client Stats ===
+        per_client_state_updates = [c.state_updates_received for c in clients if c.connected]
+        state_updates_stdev = statistics.stdev(per_client_state_updates) if len(per_client_state_updates) > 1 else 0
+        min_client_updates = min(per_client_state_updates) if per_client_state_updates else 0
+        max_client_updates = max(per_client_state_updates) if per_client_state_updates else 0
+        
+        # === Errors ===
         all_errors = []
         for c in clients:
             all_errors.extend(c.errors)
         
         return {
+            # Basic
             "connected_count": connected_count,
             "game_started_count": game_started_count,
             "total_state_updates": total_state_updates,
             "total_messages": total_messages,
-            "avg_state_interval_ms": avg_state_interval * 1000,
+            
+            # Bandwidth
+            "total_bytes_received": total_bytes_received,
+            "total_bytes_sent": total_bytes_sent,
+            "bandwidth_recv_kbps": bandwidth_recv_kbps,
+            "bandwidth_sent_kbps": bandwidth_sent_kbps,
+            "avg_bytes_per_client": avg_bytes_per_client,
+            
+            # State updates
             "state_update_hz": state_hz,
+            "avg_state_interval_ms": avg_state_interval * 1000,
+            "state_jitter_ms": state_jitter_ms,
+            "min_state_interval_ms": min_interval_ms,
+            "max_state_interval_ms": max_interval_ms,
+            
+            # State content
+            "avg_state_size_bytes": avg_state_size,
+            "max_state_size_bytes": max_state_size,
+            "min_state_size_bytes": min_state_size,
+            "avg_train_count": avg_train_count,
+            "avg_passenger_count": avg_passenger_count,
+            
+            # Latency
+            "avg_rtt_ms": avg_rtt_ms,
+            "min_rtt_ms": min_rtt_ms,
+            "max_rtt_ms": max_rtt_ms,
+            "rtt_jitter_ms": rtt_jitter_ms,
+            "rtt_samples": len(all_rtts),
+            
+            # Connection
             "avg_connection_time_ms": avg_connection_time * 1000,
+            "max_connection_time_ms": max_connection_time * 1000,
+            "min_connection_time_ms": min_connection_time * 1000,
+            
+            # Commands
+            "total_directions_sent": total_directions_sent,
+            "directions_per_second": directions_per_second,
+            
+            # Per-client variance
+            "state_updates_stdev": state_updates_stdev,
+            "min_client_updates": min_client_updates,
+            "max_client_updates": max_client_updates,
+            
+            # Errors
             "error_count": len(all_errors),
-            "errors": all_errors[:10] if all_errors else []  # First 10 errors
+            "errors": all_errors[:10] if all_errors else []
         }
     
     def test_single_room_scalability(self, player_counts: list = None):
@@ -518,20 +676,159 @@ class ScalabilityTests:
         return self.results
     
     def _print_summary(self):
-        """Print summary of all test results"""
-        print("\n" + "="*70)
+        """Print detailed summary of all test results"""
+        print("\n" + "="*80)
         print("  SCALABILITY TEST SUMMARY")
-        print("="*70)
+        print("="*80)
         
-        print("\n  {:35} | {:8} | {:6} | {:10} | {:10}".format('Test Name', 'Players', 'Rooms', 'Connected', 'State Hz'))
-        print("  " + "-"*85)
+        # Quick overview table
+        print("\n  OVERVIEW")
+        print("  " + "-"*75)
+        print("  {:30} | {:6} | {:6} | {:8} | {:10}".format(
+            'Test', 'Players', 'Rooms', 'Connected', 'State Hz'))
+        print("  " + "-"*75)
         
         for result in self.results:
-            connected = result.metrics.get('connected_count', 0)
-            state_hz = result.metrics.get('state_update_hz', 0)
-            print(f"  {result.name:<35} | {result.player_count:<8} | {result.room_count:<6} | {connected:<10} | {state_hz:<10.1f}")
+            m = result.metrics
+            print("  {:30} | {:6} | {:6} | {:8} | {:10.1f}".format(
+                result.name[:30],
+                result.player_count,
+                result.room_count,
+                m.get('connected_count', 0),
+                m.get('state_update_hz', 0)
+            ))
         
-        print("\n" + "="*70 + "\n")
+        # Detailed metrics for each test
+        for result in self.results:
+            m = result.metrics
+            print("\n" + "="*80)
+            print(f"  DETAILED METRICS: {result.name}")
+            print("="*80)
+            
+            # Connection metrics
+            print("\n  CONNECTION")
+            print(f"    Connected:          {m.get('connected_count', 0)}/{result.player_count}")
+            print(f"    Game started:       {m.get('game_started_count', 0)}")
+            print(f"    Avg connect time:   {m.get('avg_connection_time_ms', 0):.2f} ms")
+            print(f"    Min/Max connect:    {m.get('min_connection_time_ms', 0):.2f} / {m.get('max_connection_time_ms', 0):.2f} ms")
+            
+            # Bandwidth metrics
+            print("\n  BANDWIDTH")
+            print(f"    Total received:     {m.get('total_bytes_received', 0) / 1024:.2f} KB")
+            print(f"    Total sent:         {m.get('total_bytes_sent', 0) / 1024:.2f} KB")
+            print(f"    Recv bandwidth:     {m.get('bandwidth_recv_kbps', 0):.2f} kbps")
+            print(f"    Send bandwidth:     {m.get('bandwidth_sent_kbps', 0):.2f} kbps")
+            print(f"    Avg per client:     {m.get('avg_bytes_per_client', 0) / 1024:.2f} KB")
+            
+            # State update metrics
+            print("\n  STATE UPDATES")
+            print(f"    Total updates:      {m.get('total_state_updates', 0)}")
+            print(f"    Update frequency:   {m.get('state_update_hz', 0):.1f} Hz")
+            print(f"    Avg interval:       {m.get('avg_state_interval_ms', 0):.2f} ms")
+            print(f"    Min/Max interval:   {m.get('min_state_interval_ms', 0):.2f} / {m.get('max_state_interval_ms', 0):.2f} ms")
+            print(f"    Jitter (stdev):     {m.get('state_jitter_ms', 0):.2f} ms")
+            
+            # State content
+            print("\n  STATE CONTENT")
+            print(f"    Avg state size:     {m.get('avg_state_size_bytes', 0):.0f} bytes")
+            print(f"    Min/Max size:       {m.get('min_state_size_bytes', 0):.0f} / {m.get('max_state_size_bytes', 0):.0f} bytes")
+            print(f"    Avg trains:         {m.get('avg_train_count', 0):.1f}")
+            print(f"    Avg passengers:     {m.get('avg_passenger_count', 0):.1f}")
+            
+            # Latency metrics
+            print("\n  LATENCY (RTT)")
+            print(f"    Samples:            {m.get('rtt_samples', 0)}")
+            print(f"    Avg RTT:            {m.get('avg_rtt_ms', 0):.2f} ms")
+            print(f"    Min/Max RTT:        {m.get('min_rtt_ms', 0):.2f} / {m.get('max_rtt_ms', 0):.2f} ms")
+            print(f"    RTT jitter:         {m.get('rtt_jitter_ms', 0):.2f} ms")
+            
+            # Command throughput
+            print("\n  COMMAND THROUGHPUT")
+            print(f"    Directions sent:    {m.get('total_directions_sent', 0)}")
+            print(f"    Directions/sec:     {m.get('directions_per_second', 0):.1f}")
+            
+            # Per-client variance
+            print("\n  PER-CLIENT VARIANCE")
+            print(f"    Min updates:        {m.get('min_client_updates', 0)}")
+            print(f"    Max updates:        {m.get('max_client_updates', 0)}")
+            print(f"    Stdev:              {m.get('state_updates_stdev', 0):.2f}")
+            
+            # Errors
+            if m.get('error_count', 0) > 0:
+                print("\n  ERRORS")
+                print(f"    Error count:        {m.get('error_count', 0)}")
+                for err in m.get('errors', [])[:5]:
+                    print(f"      - {err}")
+        
+        # Bottleneck analysis
+        print("\n" + "="*80)
+        print("  BOTTLENECK ANALYSIS")
+        print("="*80)
+        self._analyze_bottlenecks()
+        
+        print("\n" + "="*80 + "\n")
+    
+    def _analyze_bottlenecks(self):
+        """Analyze metrics to identify potential bottlenecks"""
+        if not self.results:
+            print("  No results to analyze")
+            return
+        
+        issues = []
+        recommendations = []
+        
+        for result in self.results:
+            m = result.metrics
+            name = result.name
+            
+            # Check state update frequency
+            state_hz = m.get('state_update_hz', 0)
+            if state_hz < 30:
+                issues.append(f"  - {name}: Low state update rate ({state_hz:.1f} Hz < 30 Hz target)")
+                if m.get('avg_state_size_bytes', 0) > 2000:
+                    recommendations.append(f"    -> Consider reducing state size (currently {m.get('avg_state_size_bytes', 0):.0f} bytes)")
+            
+            # Check jitter
+            jitter = m.get('state_jitter_ms', 0)
+            if jitter > 50:
+                issues.append(f"  - {name}: High jitter ({jitter:.1f} ms)")
+                recommendations.append("    -> Check for GIL contention or blocking operations")
+            
+            # Check RTT
+            avg_rtt = m.get('avg_rtt_ms', 0)
+            if avg_rtt > 10:
+                issues.append(f"  - {name}: High RTT ({avg_rtt:.1f} ms)")
+                recommendations.append("    -> Check network stack or message queue processing")
+            
+            # Check per-client variance
+            stdev = m.get('state_updates_stdev', 0)
+            min_updates = m.get('min_client_updates', 0)
+            max_updates = m.get('max_client_updates', 0)
+            if max_updates > 0 and min_updates / max_updates < 0.5:
+                issues.append(f"  - {name}: Uneven client updates (min={min_updates}, max={max_updates})")
+                recommendations.append("    -> Check for client starvation or unfair scheduling")
+            
+            # Check bandwidth
+            bandwidth = m.get('bandwidth_recv_kbps', 0)
+            if bandwidth > 1000:  # > 1 Mbps
+                issues.append(f"  - {name}: High bandwidth usage ({bandwidth:.0f} kbps)")
+                recommendations.append("    -> Consider delta compression or reducing update frequency")
+            
+            # Check connection time
+            max_conn = m.get('max_connection_time_ms', 0)
+            if max_conn > 1000:
+                issues.append(f"  - {name}: Slow connections (max {max_conn:.0f} ms)")
+                recommendations.append("    -> Check connection handling or room assignment logic")
+        
+        if issues:
+            print("\n  POTENTIAL ISSUES:")
+            for issue in issues:
+                print(issue)
+            print("\n  RECOMMENDATIONS:")
+            for rec in recommendations:
+                print(rec)
+        else:
+            print("\n  No significant bottlenecks detected.")
 
 
 def run_scalability_tests(base_port: int = 16000, duration: float = 15.0, 
