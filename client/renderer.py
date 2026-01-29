@@ -34,6 +34,8 @@ class Renderer:
             logger.error("Cannot draw game: pygame not initialized or screen is None")
             return
 
+        self.client.profiler.start_timer("render_total")
+        
         # Fill screen with background color (white)
         self.client.screen.fill((255, 255, 255))
 
@@ -104,19 +106,31 @@ class Renderer:
             outline_width,
         )
 
+        self.client.profiler.start_timer("render_delivery_zone")
         self.draw_delivery_zone()
+        self.client.profiler.end_timer("render_delivery_zone")
 
+        self.client.profiler.start_timer("render_passengers")
         self.draw_passengers()
+        self.client.profiler.end_timer("render_passengers")
 
+        self.client.profiler.start_timer("render_trains")
         self.draw_trains()
+        self.client.profiler.end_timer("render_trains")
 
+        self.client.profiler.start_timer("render_leaderboard")
         self.draw_leaderboard()
+        self.client.profiler.end_timer("render_leaderboard")
 
         if self.client.is_dead and not self.client.in_waiting_room:
             self.draw_death_screen()
 
         # Update display
+        self.client.profiler.start_timer("display_flip")
         pygame.display.flip()
+        self.client.profiler.end_timer("display_flip")
+        
+        self.client.profiler.end_timer("render_total")
 
     def draw_delivery_zone(self) -> None:
         # Draw delivery zone

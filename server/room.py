@@ -13,6 +13,7 @@ from tqdm import tqdm
 from common.server_config import ServerConfig
 from common import stats_manager
 from common.constants import REFERENCE_TICK_RATE
+from common.performance_profiler import PerformanceProfiler
 from common.messages import (
     GameStartedSuccessMessage,
     StateMessage,
@@ -161,6 +162,13 @@ class Room:
             self.random,
         )
 
+        self.profiler = PerformanceProfiler(
+            enabled=self.config.enable_profiling,
+            output_dir=self.config.profiling_output_dir,
+            interval_seconds=self.config.profiling_interval_seconds,
+            profile_name=f"server_room_{self.id}"
+        )
+
         logger.debug(f"Room {room_id} created with number of clients {nb_players_max}")
 
     def start_game(self):
@@ -270,6 +278,8 @@ class Room:
         for update_count in iteration_range:
             if not self.running or self.game_over:
                 break
+            
+            self.profiler.start_timer("tick_total")
                 
             # Synchronize update_count and tick_counter
             self.tick_counter = update_count + 1
@@ -280,12 +290,15 @@ class Room:
             game_time_elapsed += game_seconds_per_tick
 
             # Update game state
+            self.profiler.start_timer("game_update")
             self.game.update()
+            self.profiler.end_timer("game_update")
             
             # Calculate remaining game time
             remaining_game_time = self.config.game_duration_seconds - game_time_elapsed
             
             # Prepare the game state to send to clients
+            self.profiler.start_timer("state_preparation")
             state = self.game.get_dirty_state()
             
             # Add remaining time to state data only if it has changed significantly
@@ -295,15 +308,20 @@ class Room:
 
             # Create the data packet
             state_message = StateMessage(data=state)
+            self.profiler.end_timer("state_preparation")
 
             if state:  # If data has been modified
                 # Update all AI clients
+                self.profiler.start_timer("ai_update")
                 for ai_client in self.ai_clients.values():
                     ai_client.update_state(state_message.model_dump())
+                self.profiler.end_timer("ai_update")
                 
                 # Send the state to all clients (with optional compression)
+                self.profiler.start_timer("network_send")
                 state_json = state_message.to_json()
                 compressed_json = compress_message(state_json)
+                bytes_sent = 0
                 for client_addr in list(self.clients.keys()):
                     try:
                         # Skip AI clients - they don't need network messages
@@ -317,8 +335,19 @@ class Room:
                         self.server_socket.sendto(
                             compressed_json.encode(), client_addr
                         )
+                        bytes_sent += len(compressed_json)
                     except Exception as e:
                         logger.error(f"Error sending state to client: {e}")
+                self.profiler.end_timer("network_send")
+                self.profiler.record_network_event("state_broadcast", bytes_sent)
+            
+            self.profiler.end_timer("tick_total")
+            
+            # Record metrics every 60 ticks
+            if update_count % 60 == 0:
+                self.profiler.record_metric("game", "trains_count", len(self.game.trains))
+                self.profiler.record_metric("game", "passengers_count", len(self.game.passengers))
+                self.profiler.record_metric("game", "clients_count", len(self.clients))
             
             # Sleep if necessary to maintain the desired tick rate in real time
             # Skip sleep in grading mode to run as fast as possible
@@ -348,6 +377,7 @@ class Room:
         logger.info(f"Final scores: {self.game.best_scores}")
 
         logger.info(f"Game in room {self.id} ending after {self.tick_counter} ticks, game time: {game_time_elapsed:.2f}s, real time: {total_real_time:.2f}s")
+        self.profiler.stop()
         self.end_game()
 
     def end_game(self):

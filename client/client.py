@@ -18,6 +18,7 @@ from common.config import Config
 from common.client_config import ClientConfig, GameMode
 from common.base_agent import BaseAgent
 from common.constants import REFERENCE_TICK_RATE
+from common.performance_profiler import PerformanceProfiler
 
 
 # Configure logging
@@ -148,12 +149,24 @@ class Client:
                 module_path = f"common.agents.{agent_file_name}"
                 logger.info(f"Importing module: {module_path}")
 
-                # Add parent directory to Python path to allow importing agents package
-                module = importlib.import_module(module_path)
-                self.agent = module.Agent(self.nickname, self.network, timeout=1/REFERENCE_TICK_RATE)
+                try:
+                    # Add parent directory to Python path to allow importing agents package
+                    module = importlib.import_module(module_path)
+                    self.agent = module.Agent(self.nickname, self.network, timeout=1/REFERENCE_TICK_RATE)
+                except ModuleNotFoundError:
+                    logger.error(f"Agent file '{agent_info.agent_file_name}' not found in common/agents folder. Check your config.json (client/agent/agent_file_name).")
+                    pygame.quit()
+                    sys.exit(1)
 
         self.ping_response_received: bool = False
         self.server_disconnected: bool = False
+
+        self.profiler = PerformanceProfiler(
+            enabled=self.config.enable_profiling,
+            output_dir=self.config.profiling_output_dir,
+            interval_seconds=self.config.profiling_interval_seconds,
+            profile_name=f"client_{self.nickname}"
+        )
 
     def update_game_window_size(self, width: int | None = None, height: int | None = None) -> None:
         """Schedule window size update to be done in main thread"""
@@ -236,12 +249,26 @@ class Client:
         # Main loop
         logger.info(f"Running client loop: {self.running}")
         clock = pygame.time.Clock()
+        frame_count = 0
         while self.running:
+            self.profiler.start_timer("frame")
+            
             self.update()
+            
+            frame_time_ms = self.profiler.end_timer("frame", "timers")
+            if frame_time_ms:
+                self.profiler.record_frame_time(frame_time_ms)
+            
             clock.tick(REFERENCE_TICK_RATE)
+            frame_count += 1
+            
+            if frame_count % 60 == 0:
+                self.profiler.record_metric("client", "trains_count", len(self.trains))
+                self.profiler.record_metric("client", "passengers_count", len(self.passengers))
 
         # Close connection
         self.network.disconnect()
+        self.profiler.stop()
         pygame.quit()
 
     def update(self) -> None:
