@@ -209,6 +209,9 @@ class LiveServerManager:
             from common.config import Config
             
             # Create config with test settings
+            # Check if USE_MULTIPROCESSING env var is set for testing
+            use_mp = os.environ.get('USE_MULTIPROCESSING', 'false').lower() == 'true'
+            
             config_dict = {
                 "server": {
                     "host": "127.0.0.1",
@@ -217,6 +220,7 @@ class LiveServerManager:
                     "waiting_time_before_bots_seconds": 2,
                     "game_duration_seconds": 30,
                     "grading_mode": False,
+                    "use_multiprocessing": use_mp,
                     "agents": []
                 },
                 "client": {

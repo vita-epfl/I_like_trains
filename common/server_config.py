@@ -81,3 +81,8 @@ class ServerConfig(BaseModel):
 
     # Local agents configuration, add or remove agents you want to evaluate as needed
     agents: list[AgentConfig] = []
+
+    # Enable multiprocessing mode for rooms.
+    # When True, each room runs in a separate process, bypassing the Python GIL
+    # for better performance with many concurrent clients.
+    use_multiprocessing: bool = False
