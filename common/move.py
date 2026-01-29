@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from enum import Enum
 
 
@@ -8,7 +10,7 @@ class Move(Enum):
     LEFT = (-1, 0)
     DROP = "drop"
 
-    def turn_left(move):
+    def turn_left(move: Move) -> Move:
         """
         Helper function you can call on the class. E.g.
         Move.turn_left(Move.UP)
@@ -25,7 +27,7 @@ class Move(Enum):
             case _:
                 return move
 
-    def turn_right(move):
+    def turn_right(move: Move) -> Move:
         """
         Helper function you can call on the class. E.g.
         Move.turn_right(Move.UP)

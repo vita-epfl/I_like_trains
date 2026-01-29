@@ -8,9 +8,7 @@ import json
 from server.passenger import Passenger
 import importlib
 
-
 logger = logging.getLogger("server.ai_client")
-
 
 class AINetworkInterface:
     """
@@ -67,8 +65,17 @@ class AIClient:
     using the Agent class from the client
     """
 
-    def __init__(self, room, nickname, ai_agent_file_name=None, waiting_for_respawn=False, is_dead=False):
-        """Initialize the AI client"""
+    def __init__(self, room, nickname, ai_agent_file_name=None, waiting_for_respawn=False, is_dead=False, agent_dir=None):
+        """Initialize the AI client
+        
+        Args:
+            room: The room the AI client is in
+            nickname: The nickname of the AI client
+            ai_agent_file_name: The filename of the agent implementation
+            waiting_for_respawn: Whether the AI is waiting for respawn
+            is_dead: Whether the AI is dead
+            agent_dir: The directory of the agent implementation
+        """
         logger.debug(f"Initializing AI client {nickname}, waiting_for_respawn: {waiting_for_respawn}, is_dead: {is_dead}")
         self.room = room
         self.game = room.game
@@ -87,15 +94,12 @@ class AIClient:
         # Initialize agent if path_to_agent is provided
         try:
             logger.info(f"Trying to import AI agent for {nickname}")
+            # Check if module_path is defined
             if ai_agent_file_name.endswith(".py"):
                 # Remove .py extension
                 ai_agent_file_name = ai_agent_file_name[:-3]
 
-            # Construct the module path correctly
-            module_path = f"common.agents.{ai_agent_file_name}"
-            logger.info(f"Importing module: {module_path}")
-
-            module = importlib.import_module(module_path)
+            module = importlib.import_module(agent_dir + "." + ai_agent_file_name)
             self.agent = module.Agent(nickname, self.network, logger="server.ai_agent", timeout=1 / self.room.config.tick_rate)
             logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name}")
 
@@ -109,7 +113,7 @@ class AIClient:
         self.agent.delivery_zone = self.game.delivery_zone.to_dict()
 
         self.running = True
-        logger.info(f"AI client {nickname} started")
+        logger.debug(f"AI client {nickname} started")
 
     def update_state(self, state_data):
         """Update the state from the game"""
@@ -182,8 +186,12 @@ class AIClient:
 
         # Update agent state only if train is alive and game contains train
         if not self.is_dead and self.game.contains_train(self.nickname):
-            self.agent.update_agent()
+            try:
+                self.agent.update_agent()
+            except Exception as e:
+                logger.error(f"Error during agent update for {self.nickname}: {e}")
 
     def stop(self):
         """Stop the AI client"""
+        logger.debug(f"Stopping AI client {self.nickname}")
         self.running = False

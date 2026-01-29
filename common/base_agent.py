@@ -1,12 +1,16 @@
+from __future__ import annotations
+
 import logging
 import threading
 import ctypes
+from typing import Any
+
 from client.network import NetworkManager
 from common import move
 from common.constants import REFERENCE_TICK_RATE
 
 
-def _terminate_thread(thread):
+def _terminate_thread(thread: threading.Thread) -> None:
     """Terminate a thread forcefully.
     
     Args:
@@ -53,37 +57,38 @@ class BaseAgent:
             passengers (list): List of passengers in the game
             delivery_zone (list): List of delivery zones in the game
         """
-        self.logger = logging.getLogger(logger)
-        self.logger.setLevel(logging.DEBUG)
-        self.nickname = nickname
-        self.network = network
+        self.logger: logging.Logger = logging.getLogger(logger)
+        if logger == "client.agent":
+            self.logger.setLevel(logging.DEBUG)
+        self.nickname: str = nickname
+        self.network: NetworkManager = network
         # self.timeout = timeout
-        self.timeout = 1  # Exceptionally overriding it to 1 second
+        self.timeout: float = 1  # Exceptionally overriding it to 1 second
 
         # Game parameters, regularly updated by the client in handle_state_data() (see game_state.py)
-        self.cell_size = None
-        self.game_width = None
-        self.game_height = None
-        self.all_trains = None
-        self.passengers = None
-        self.delivery_zone = None
-        self.best_scores = None
+        self.cell_size: int | None = None
+        self.game_width: int | None = None
+        self.game_height: int | None = None
+        self.all_trains: dict[str, dict[str, Any]] | None = None
+        self.passengers: list[dict[str, Any]] | None = None
+        self.delivery_zone: dict[str, Any] | None = None
+        self.best_scores: dict[str, int] | None = None
 
-    def _run_get_move(self):
+    def _run_get_move(self) -> None:
         """
         Wrapper method to call get_move() in a separate thread.
         Stores the result in self._move_result.
         """
         self._move_result = self.get_move()
 
-    def get_move(self):
+    def get_move(self) -> move.Move:
         """
         Abstract method to be implemented by subclasses.
         Must return a valid move.Move.
         """
         raise NotImplementedError("Subclasses must implement this method")
 
-    def update_agent(self):
+    def update_agent(self) -> None:
         """
         Regularly called by the client to send the new direction to the server. Not supposed to be modified.
 

@@ -3,6 +3,9 @@ import logging
 import random
 import threading
 import time
+from tqdm import tqdm
+
+import os
 
 from common.server_config import ServerConfig
 from common import stats_manager
@@ -13,7 +16,7 @@ from server.ai_client import AIClient
 
 # Configure logger
 logger = logging.getLogger("server.room")
-logger.setLevel(logging.DEBUG)
+# Log level will be set by the server.py setup_server_logger function
 
 # List of names for AI-controlled clients
 AI_NAMES = [
@@ -53,6 +56,12 @@ class Room:
         remove_room,
         addr_to_sciper,
         record_disconnection,
+        tqdm_message=None,
+        grading_scores=None,
+        run_results=None,
+        current_run_index=None,
+        current_nb_players=None,
+        bot_seed=None,
     ):
         self.config = config
         self.id = room_id
@@ -63,15 +72,22 @@ class Room:
         self.remove_room = remove_room
         self.addr_to_sciper = addr_to_sciper
         self.record_disconnection = record_disconnection
+        self.tqdm_message = tqdm_message
+        self.grading_scores = grading_scores
+        self.run_results = run_results
+        self.current_run_index = current_run_index
+        self.current_nb_players = current_nb_players
 
-        # Initialize random seed if provided in config, otherwise generate one
-        if self.config.seed is None:
-            self.seed = random.randint(0, 2**32 - 1)
+        # Initialize random seed if provided directly or in config, otherwise generate one
+        if bot_seed is not None:
+            self.bot_seed = bot_seed
+        elif self.config.seed is not None:
+            self.bot_seed = self.config.seed
         else:
-            self.seed = self.config.seed
-        self.random = random.Random(self.seed)
+            self.bot_seed = random.randint(0, 2**32 - 1)
+        self.random = random.Random(self.bot_seed)
 
-        logger.info(f"Room {self.id} created with seed {self.seed}")
+        logger.debug(f"Room {self.id} created with seed {self.bot_seed}")
 
         self.clients = {}  # {addr: nickname}
         self.client_game_modes = {}  # {addr: game_mode}
@@ -88,14 +104,21 @@ class Room:
 
         self.tick_counter = 0  # Track the number of ticks since game start
 
-        self.has_clients = False  # Track if the room has at least one human player
-
         self.used_ai_names = set()  # Track AI names that are already in use
         self.ai_clients = {}  # Maps train names to AI clients
         self.AI_NAMES = AI_NAMES  # Store the AI names as an instance attribute
         self.used_nicknames = set(self.clients.keys())
 
-        logger.info(f"Room {room_id} created with number of clients {nb_players_max}")
+        self.game = Game(
+            self.config,
+            self.send_cooldown_notification,
+            self.nb_players_max,
+            self.id,
+            self.bot_seed,
+            self.random,
+        )
+
+        logger.debug(f"Room {room_id} created with number of clients {nb_players_max}")
 
     def start_game(self):
         logger.debug("Starting game...")
@@ -107,22 +130,14 @@ class Room:
         if self.game_thread:
             return
 
-        self.game = Game(
-            self.config,
-            self.send_cooldown_notification,
-            self.nb_players_max,
-            self.id,
-            self.seed,
-            self.random,
-        )
-
         # Reset tick counter            
         self.game.start_time = time.time()  # Start at tick 0
         self.game.game_started = True
         self.game.start_time_ticks = 0
         self.game.current_tick = 0
 
-        logger.info(f"Game started in room {self.id} at tick {self.tick_counter}")
+        logger.debug(f"Game started in room {self.id} at tick {self.tick_counter}")
+        logger.debug(f"Clients in room {self.id}: {self.clients}")
 
         # Send game_started_success message - Moved before the grading mode check
         response = {"type": "game_started_success"}
@@ -142,41 +157,21 @@ class Room:
             except Exception as e:
                 logger.error(f"Error sending start success to client: {e}")
         
-        # In grading mode, we add all configured agents to the game
-        if self.config.grading_mode:
-            logger.info("Starting game in grading mode")
-            if len(self.config.agents) > 0:
-                # Clear any existing AI clients first to avoid duplicates
-                self.ai_clients = {}
-                self.game.ai_clients = {}
-                
-                # Add all configured agents
-                for agent in self.config.agents:
-                    ai_nickname = self.get_available_ai_name(agent)
-                    ai_agent_file_name = agent.agent_file_name
-                    logger.info(f"Adding AI client {ai_nickname} with agent {ai_agent_file_name}")
-                    self.add_ai(ai_nickname=ai_nickname, ai_agent_file_name=ai_agent_file_name)
-            else:
-                logger.warning("No agents configured in config.json for grading mode")
-        else:
-            # In normal mode, we add all human players to the game first and then add bots if needed
-            logger.info("Starting game in normal mode")
-            
-            self.add_all_trains()
-            
-            current_players = self.get_player_count()
-            nb_bots_needed = self.nb_players_max - current_players
-            self.fill_with_bots(nb_bots_needed)
+        self.add_all_trains()
+        
+        current_players = self.get_player_count()
+        nb_bots_needed = self.nb_players_max - current_players
+        self.fill_with_bots(nb_bots_needed)
 
-            for ai_name, ai_client in self.game.ai_clients.items():
-                if ai_name not in self.game.trains:
-                    logger.info(f"Adding train for AI client {ai_name}")
-                
-                # Log train status
-                if ai_name in self.game.trains:
-                    logger.info(f"Train {ai_name} initialized at position {self.game.trains[ai_name].position}")
-                else:
-                    logger.warning(f"Failed to add train for AI client {ai_name}")
+        for ai_name in list(self.game.ai_clients.keys()):
+            if ai_name not in self.game.trains:
+                logger.debug(f"Adding train for AI client {ai_name}")
+            
+            # Log train status
+            if ai_name in self.game.trains:
+                logger.debug(f"Train {ai_name} initialized at position {self.game.trains[ai_name].position}")
+            else:
+                logger.warning(f"Failed to add train for AI client {ai_name}")
         
         # In grading mode, we run the simulation directly in this thread
         # Create and start game thread
@@ -184,7 +179,7 @@ class Room:
         self.game_thread.daemon = True
         self.game_thread.start()
 
-        logger.info(
+        logger.debug(
             f"Game started in room {self.id} with {len(self.clients)} clients"
         )
             
@@ -211,10 +206,10 @@ class Room:
         else:
             speed_description = f"{reference_tickrate/self.config.tick_rate:.1f}x slower than normal"
             
-        logger.info(f"Game running at {speed_description} (tickrate: {self.config.tick_rate}).")
-        logger.info(f"Acceleration in comparison to reference tickrate: {self.config.tick_rate / reference_tickrate:.2f}")
-        logger.info(f"Game seconds per tick: {game_seconds_per_tick:.4f}s")
-        logger.info(f"Real seconds per tick: {real_seconds_per_tick*1000:.2f}ms")
+        logger.debug(f"Game running at {speed_description} (tickrate: {self.config.tick_rate}).")
+        logger.debug(f"Acceleration in comparison to reference tickrate: {self.config.tick_rate / reference_tickrate:.2f}")
+        logger.debug(f"Game seconds per tick: {game_seconds_per_tick:.4f}s")
+        logger.debug(f"Real seconds per tick: {real_seconds_per_tick*1000:.2f}ms")
         
         # Initialize game time to zero
         game_time_elapsed = 0.0
@@ -223,7 +218,13 @@ class Room:
         game_start_time = time.time()
         
         # Run the simulation for the calculated number of ticks
-        for update_count in range(total_updates):
+        # Use tqdm progress bar only in grading mode
+        if self.config.grading_mode:
+            iteration_range = tqdm(range(total_updates), desc=self.tqdm_message, unit="ticks")
+        else:
+            iteration_range = range(total_updates)
+            
+        for update_count in iteration_range:
             if not self.running or self.game_over:
                 break
                 
@@ -319,6 +320,7 @@ class Room:
         logger.debug(f"Best scores: {self.game.best_scores}")
 
         participant_scores = []  # List of tuples: (id, score, is_human)
+        participant_id = None  # Initialize participant_id to avoid UnboundLocalError
         for nickname, best_score in self.game.best_scores.items():
             logger.debug(f"Train {nickname} has best score {best_score}")
 
@@ -353,8 +355,8 @@ class Room:
                 participant_id = nickname  # Use name as ID for bots
                 is_human = False
 
-            if participant_id:
-                participant_scores.append((participant_id, best_score, is_human))
+        if participant_id:
+            participant_scores.append((participant_id, best_score, is_human))
 
         # --- Record Bot vs Human Scores ---
         human_players = [(p_id, score) for p_id, score, is_human in participant_scores if is_human]
@@ -366,116 +368,196 @@ class Room:
                 for bot_id, bot_score in bot_players:
                     logger.debug(f"  Recording: Human {human_id} ({human_score}) vs Bot {bot_id} ({bot_score})")
                     stats_manager.record_bot_vs_human_score(human_id, bot_id, human_score, bot_score)
-        # -----------------------------------
 
-        # --- Stats: Record Game Results ---
-        if final_scores:
-            logger.debug(f"Recording game results for final scores: {final_scores}")
-            winner_nickname = final_scores[0]["name"]
-
-            # We only need the winner's nickname and whether they are AI for context
-            winner_is_ai = winner_nickname in self.ai_clients
-
-            for i, score_entry in enumerate(final_scores):
-                logger.debug(f"Processing score entry {i}: {score_entry}")
-                nickname = score_entry["name"]
-                addr = next((a for a, n in self.clients.items() if n == nickname), None)
-                is_ai = nickname in self.ai_clients
-
-                # --- Skip AI players for stat recording ---
-                if is_ai:
-                    logger.debug(f"Skipping stats for AI player {nickname}")
-                    continue  # Only record stats for human players
-
-                # --- Get Human Player Info ---
-                if not addr:  # Should only happen if human client disconnected *during* end_game processing?
-                    logger.warning(
-                        f"Stats: Could not find address for player {nickname} in room {self.id}. Skipping stats."
-                    )
-                    continue
-
-                # Get sciper from the server instance using the address
-                player_sciper = self.addr_to_sciper.get(addr)
-                logger.debug(
-                    f"Stats: Found sciper {player_sciper} for human player {nickname} ({addr})"
-                )
-
-                if not player_sciper:
-                    logger.warning(
-                        f"Stats: Could not find sciper for human player {nickname} ({addr}). Skipping stats."
-                    )
-                    continue
-
-                # --- Determine Opponent Context ---
-                is_winner = nickname == winner_nickname
-                opponent_nickname = "N/A"
-                opponent_is_bot = False
-
-                logger.debug(
-                    f"Stats: Determining opponent context for {nickname} - is winner: {is_winner}"
-                )
-
-                if is_winner:
-                    logger.debug(
-                        f"Human player {nickname} is a winner - finding opponent"
-                    )
-                    # Winner: Find highest scoring opponent for context (can be human or AI)
-                    if len(final_scores) > 1:
-                        logger.debug(
-                            f"Multiple human players in room {self.id} - finding highest scoring opponent"
-                        )
-                        opponent_score_entry = final_scores[1]
-                        opponent_nickname = opponent_score_entry["name"]
-                        opponent_is_bot = opponent_nickname in self.ai_clients
-                    else:
-                        logger.debug(
-                            f"Only one human player in room {self.id} - no opponent"
-                        )
-                        opponent_nickname = "No Opponent"
-                        opponent_is_bot = False  # No opponent
+        # --- Update Excel scores for grading mode ---
+        if self.config.grading_mode and hasattr(self, 'student_nickname'):
+            # Get the sorted scores to determine rankings
+            sorted_scores = sorted([(nickname, score) for nickname, score in self.game.best_scores.items()], key=lambda x: x[1], reverse=True)
+            
+            # Find the student agent's position
+            student_position = None
+            for i, (nickname, score) in enumerate(sorted_scores):
+                if nickname == self.student_nickname:
+                    student_position = i
+                    break
+            
+            if student_position is not None:
+                # Calculate points based on position
+                nb_players = self.nb_players_max
+                points = 0
+                
+                if student_position == 0:  # First place
+                    points = nb_players
+                    logger.info(f"Agent {self.student_nickname} came in 1st place, earning {points} points")
+                elif student_position == 1:  # Second place
+                    points = nb_players / 2
+                    logger.info(f"Agent {self.student_nickname} came in 2nd place, earning {points} points")
+                elif student_position == 2:  # Third place
+                    points = nb_players / 4
+                    logger.info(f"Agent {self.student_nickname} came in 3rd place, earning {points} points")
                 else:
-                    logger.debug(
-                        f"Human player {nickname} is a loser - opponent is {winner_nickname}"
-                    )
-                    # Loser: Opponent context is the winner
-                    opponent_nickname = winner_nickname
-                    opponent_is_bot = winner_is_ai
+                    logger.info(f"Agent {self.student_nickname} came in {student_position+1}th place, earning 0 points")
+                
+                # Extract agent name from student_nickname (remove 'Student_' prefix)
+                agent_name = self.student_nickname.replace('Student_', '')
+                
+                # Use grading_scores dictionary passed during room creation
+                if self.grading_scores is not None and agent_name in self.grading_scores:
+                    # Use current_nb_players passed during room creation or fallback to nb_players_max
+                    current_nb_players = self.current_nb_players if self.current_nb_players is not None else self.nb_players_max
+                    
+                    if current_nb_players in self.grading_scores[agent_name]:
+                        self.grading_scores[agent_name][current_nb_players] += points
+                        logger.info(f"Updated scores for {agent_name} with {current_nb_players} players: {self.grading_scores[agent_name][current_nb_players]}")
+                    else:
+                        logger.warning(f"Unable to update scores: {current_nb_players} not found in score dictionary for {agent_name}")
+            else:
+                logger.warning("Student position is None")
+                # Set student score to 0
+                
+            # --- Store run results for Excel file ---
+            if self.run_results is not None:
+                # Get student score
+                student_score = 0
+                for nickname, score in sorted_scores:
+                    if nickname == self.student_nickname:
+                        student_score = score
+                        break
+                
+                # Create a dictionary to store the run results
+                run_result = {
+                    "run": self.current_run_index+1,
+                    "nb players": self.nb_players_max,
+                    "student": self.student_nickname,
+                    "student score": student_score
+                }
+                
+                # Add bot scores
+                bot_index = 1
+                for nickname, score in sorted_scores:
+                    if nickname != self.student_nickname and bot_index <= 3:
+                        run_result[f"bot{bot_index}"] = nickname
+                        run_result[f"score bot {bot_index}"] = score
+                        bot_index += 1
+                
+                # Add the run result to the list
+                self.run_results.append(run_result)
+                logger.info(f"Stored run results for {self.student_nickname}: {run_result}")
+            else:
+                logger.warning("No run_results list found in the room object")
 
-                # --- Record Stats ---
-                try:
-                    logger.debug(
-                        f"Recording game result for sciper {player_sciper} - win: {is_winner}, opponent: {opponent_nickname}, opponent is bot: {opponent_is_bot}"
-                    )
-                    stats_manager.record_game_result(
-                        sciper=player_sciper,
-                        win=is_winner,
-                        opponent_is_bot=opponent_is_bot,
-                        opponent_name=opponent_nickname,
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Stats: Failed to record game result for {player_sciper}: {e}"
-                    )
+        elif hasattr(self, 'student_nickname'):
+            logger.info(f"Not in grading mode, skipping score update for {self.student_nickname}")
+        else:
+            logger.debug("No student agent in this room, skipping score update")
 
-        # === Record last match scores for all pairs ===
-        logger.debug(
-            f"Recording last match scores for all pairs. Participants: {participant_scores}"
-        )
-        if len(participant_scores) >= 2:
-            for i in range(len(participant_scores)):
-                for j in range(i + 1, len(participant_scores)):
-                    id1, score1, is_human1 = participant_scores[i]
-                    id2, score2, is_human2 = participant_scores[j]
+        # # --- Stats: Record Game Results ---
+        # if final_scores and not self.config.grading_mode:
+        #     winner_nickname = final_scores[0]["name"]
 
-                    # Call record_bot_vs_human_score ONLY for human vs bot pairs
-                    if is_human1 and not is_human2:
-                        stats_manager.record_bot_vs_human_score(
-                            human_sciper=id1, bot_nickname=id2, human_score=score1, bot_score=score2
-                        )
-                    elif not is_human1 and is_human2:
-                        stats_manager.record_bot_vs_human_score(
-                            human_sciper=id2, bot_nickname=id1, human_score=score2, bot_score=score1
-                        )
+        #     # We only need the winner's nickname and whether they are AI for context
+        #     winner_is_ai = winner_nickname in self.ai_clients
+
+        #     for i, score_entry in enumerate(final_scores):
+        #         logger.debug(f"Processing score entry {i}: {score_entry}")
+        #         nickname = score_entry["name"]
+        #         addr = next((a for a, n in self.clients.items() if n == nickname), None)
+        #         is_ai = nickname in self.ai_clients
+
+        #         # --- Skip AI players for stat recording ---
+        #         if is_ai:
+        #             logger.debug(f"Skipping stats for AI player {nickname}")
+        #             continue  # Only record stats for human players
+
+        #         # --- Get Human Player Info ---
+        #         if not addr:  # Should only happen if human client disconnected *during* end_game processing?
+        #             logger.warning(
+        #                 f"Stats: Could not find address for player {nickname} in room {self.id}. Skipping stats."
+        #             )
+        #             continue
+
+        #         # Get sciper from the server instance using the address
+        #         player_sciper = self.addr_to_sciper.get(addr)
+        #         logger.debug(
+        #             f"Stats: Found sciper {player_sciper} for human player {nickname} ({addr})"
+        #         )
+
+        #         if not player_sciper:
+        #             logger.warning(
+        #                 f"Stats: Could not find sciper for human player {nickname} ({addr}). Skipping stats."
+        #             )
+        #             continue
+
+        #         # --- Determine Opponent Context ---
+        #         is_winner = nickname == winner_nickname
+        #         opponent_nickname = "N/A"
+        #         opponent_is_bot = False
+
+        #         logger.debug(
+        #             f"Stats: Determining opponent context for {nickname} - is winner: {is_winner}"
+        #         )
+
+        #         if is_winner:
+        #             logger.debug(
+        #                 f"Human player {nickname} is a winner - finding opponent"
+        #             )
+        #             # Winner: Find highest scoring opponent for context (can be human or AI)
+        #             if len(final_scores) > 1:
+        #                 logger.debug(
+        #                     f"Multiple human players in room {self.id} - finding highest scoring opponent"
+        #                 )
+        #                 opponent_score_entry = final_scores[1]
+        #                 opponent_nickname = opponent_score_entry["name"]
+        #                 opponent_is_bot = opponent_nickname in self.ai_clients
+        #             else:
+        #                 logger.debug(
+        #                     f"Only one human player in room {self.id} - no opponent"
+        #                 )
+        #                 opponent_nickname = "No Opponent"
+        #                 opponent_is_bot = False  # No opponent
+        #         else:
+        #             logger.debug(
+        #                 f"Human player {nickname} is a loser - opponent is {winner_nickname}"
+        #             )
+        #             # Loser: Opponent context is the winner
+        #             opponent_nickname = winner_nickname
+        #             opponent_is_bot = winner_is_ai
+
+        #         # --- Record Stats ---
+        #         try:
+        #             logger.debug(
+        #                 f"Recording game result for sciper {player_sciper} - win: {is_winner}, opponent: {opponent_nickname}, opponent is bot: {opponent_is_bot}"
+        #             )
+        #             stats_manager.record_game_result(
+        #                 sciper=player_sciper,
+        #                 win=is_winner,
+        #                 opponent_is_bot=opponent_is_bot,
+        #                 opponent_name=opponent_nickname,
+        #             )
+        #         except Exception as e:
+        #             logger.error(
+        #                 f"Stats: Failed to record game result for {player_sciper}: {e}"
+        #             )
+
+        # # === Record last match scores for all pairs ===
+        # logger.debug(
+        #     f"Recording last match scores for all pairs. Participants: {participant_scores}"
+        # )
+        # if len(participant_scores) >= 2:
+        #     for i in range(len(participant_scores)):
+        #         for j in range(i + 1, len(participant_scores)):
+        #             id1, score1, is_human1 = participant_scores[i]
+        #             id2, score2, is_human2 = participant_scores[j]
+
+        #             # Call record_bot_vs_human_score ONLY for human vs bot pairs
+        #             if is_human1 and not is_human2:
+        #                 stats_manager.record_bot_vs_human_score(
+        #                     human_sciper=id1, bot_nickname=id2, human_score=score1, bot_score=score2
+        #                 )
+        #             elif not is_human1 and is_human2:
+        #                 stats_manager.record_bot_vs_human_score(
+        #                     human_sciper=id2, bot_nickname=id1, human_score=score2, bot_score=score1
+        #                 )
                     # No call for human-human or bot-bot pairs as last_match_scores was removed
 
         # Save scores if any were updated
@@ -530,7 +612,7 @@ class Room:
             time.sleep(
                 2
             )  # Wait 2 seconds to ensure clients receive the game over message
-            logger.info(f"Closing room {self.id} after game over")
+            logger.debug(f"Closing room {self.id} after game over")
             self.running = False
             # Remove the room from the server
             self.remove_room(self.id)
@@ -553,9 +635,14 @@ class Room:
         ]
 
     def get_player_count(self):
-        return len(
+        # Count human players (non-observers)
+        player_count = len(
             [mode for mode in self.client_game_modes.values() if mode != "observer"]
         )
+        # Add AI clients if the attribute exists
+        if hasattr(self, 'ai_clients'):
+            player_count += len(self.ai_clients)
+        return player_count
 
     def get_observer_count(self):
         return len(
@@ -578,7 +665,7 @@ class Room:
                 ):  # Limit to TICK_RATE Hz
                     # Calculate remaining time before adding bots
                     remaining_time = 0
-                    if self.has_clients:
+                    if self.clients:
                         # Use the time the first client joined if available, otherwise creation time
                         start_time = (
                             self.first_client_join_time
@@ -719,15 +806,23 @@ class Room:
         if nb_bots_needed <= 0:
             return
 
-        logger.info(f"Adding {nb_bots_needed} bots to room {self.id}")
+        logger.debug(f"Adding {nb_bots_needed} bots to room {self.id} (seed: {self.bot_seed})")
 
+        # Check if agents list exists and is not empty
+        if not hasattr(self.config, 'agents') or not self.config.agents:
+            logger.error(f"No agents defined in config, cannot add bots to room {self.id}")
+            return
+            
         # If we need less bots or an equal number to the available list, we pick the bots
         # randomly (without repetition).
         # If we need more, we pick each one at least once.
         agents = self.config.agents[:]
-        random.shuffle(agents)
+        
+        # Use the room's seeded random generator instead of the global one
+        # for deterministic bot selection
+        self.random.shuffle(agents)
         while len(agents) < nb_bots_needed:
-            agents.append(random.choice(self.config.agents))
+            agents.append(self.random.choice(self.config.agents))
         agents = agents[:nb_bots_needed]
 
         for agent in agents:
@@ -759,30 +854,31 @@ class Room:
 
         return ai_nickname
 
-    def add_ai(self, ai_nickname=None, ai_agent_file_name=None):
+    def add_student_ai(self, ai_nickname=None, ai_agent_file_name=None, agent_dir="common.agents_to_evaluate"):
+        self.student_nickname = ai_nickname
+        self.add_ai(ai_nickname, ai_agent_file_name, agent_dir)
+
+    def add_ai(self, ai_nickname=None, ai_agent_file_name=None, agent_dir="common.agents"):
         """Create an AI client to control a train"""
 
         # Creating a new AI train (not replacing an existing one)
-        logger.info(f"Creating new AI train with name {ai_nickname}")
+        logger.debug(f"Creating new AI train with name {ai_nickname}")
 
         # Add the train to the game
         if self.game.add_train(ai_nickname):
-            # Add the AI client to the room
-            self.clients[("AI", ai_nickname)] = ai_nickname
-
             # Import the AI agent from the config path
-            logger.info(
+            logger.debug(
                 f"Creating AI client {ai_nickname} using agent from {ai_agent_file_name}"
             )
 
             self.ai_clients[ai_nickname] = AIClient(
-                self, ai_nickname, ai_agent_file_name
+                self, ai_nickname, ai_agent_file_name=ai_agent_file_name, agent_dir=agent_dir
             )
 
             # Add the ai_client to the game
             self.game.ai_clients[ai_nickname] = self.ai_clients[ai_nickname]
 
-            logger.info(f"Added new AI train {ai_nickname} to room {self.id}")
+            logger.debug(f"Added new AI train {ai_nickname} to room {self.id}")
             return ai_nickname
         else:
             logger.error(f"Failed to add new AI train {ai_nickname} to game")
@@ -794,7 +890,7 @@ class Room:
             logger.warning(f"AI already exists for train {train_nickname_to_replace}")
             return
 
-        logger.info(f"Creating AI client for train {train_nickname_to_replace}")
+        logger.debug(f"Creating AI client for train {train_nickname_to_replace}")
 
         # Change the train's name in the game
         if train_nickname_to_replace in self.game.trains:
@@ -846,10 +942,12 @@ class Room:
                         logger.error(
                             f"Error sending train rename notification to client {client_addr}: {e}"
                         )
+            # link to common/agents/
+            agent_dir = "common.agents"
 
             # Create the AI client with the new name
             self.ai_clients[ai_nickname] = AIClient(
-                self, ai_nickname, ai_agent_file_name, is_dead, is_dead
+                self, ai_nickname, ai_agent_file_name, is_dead, is_dead, agent_dir
             )
 
             # Add the AI client to the game

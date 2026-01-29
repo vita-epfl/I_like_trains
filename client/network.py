@@ -3,13 +3,19 @@ Network manager class for the game "I Like Trains"
 Handles all network communications between client and server
 """
 
+from __future__ import annotations
+
 import socket
 import json
 import logging
 import threading
 import time
+from typing import TYPE_CHECKING, Any
 
 from common.version import EXPECTED_CLIENT_VERSION
+
+if TYPE_CHECKING:
+    from client.client import Client
 
 
 # Configure logging
@@ -24,17 +30,17 @@ logger = logging.getLogger("client.network")
 class NetworkManager:
     """Class responsible for client network communications"""
 
-    def __init__(self, client, host, port=5555):
+    def __init__(self, client: Client, host: str, port: int = 5555) -> None:
         """Initialize network manager with client reference"""
-        self.client = client
-        self.host = host
-        self.port = port
-        self.socket = None
-        self.running = True
-        self.receive_thread = None
-        self.last_ping_time = 0
+        self.client: Client = client
+        self.host: str = host
+        self.port: int = port
+        self.socket: socket.socket | None = None
+        self.running: bool = True
+        self.receive_thread: threading.Thread | None = None
+        self.last_ping_time: float = 0
 
-    def connect(self):
+    def connect(self) -> bool:
         """Establish connection with server"""
         try:
             # Create UDP socket
@@ -58,7 +64,7 @@ class NetworkManager:
             logger.error(f"Failed to create UDP socket: {e}")
             return False
 
-    def disconnect(self, stop_client=False):
+    def disconnect(self, stop_client: bool = False) -> None:
         """Close connection with server"""
         self.running = False
         if stop_client:
@@ -83,7 +89,7 @@ class NetworkManager:
             self.socket = None  # Set to None after closing
             logger.info("UDP socket closed")
 
-    def send_message(self, message):
+    def send_message(self, message: dict[str, Any]) -> bool:
         """Send message to server"""
         if not self.socket:
             logger.error("Cannot send message: UDP socket not created")
@@ -110,7 +116,7 @@ class NetworkManager:
             logger.error(f"Failed to send UDP message: {e}")
             return False
 
-    def receive_game_state(self):
+    def receive_game_state(self) -> None:
         """Thread that receives game state updates from the server"""
         # Create a custom trace level that's lower than debug
         # TRACE_LEVEL = 5  # Lower than DEBUG which is 10
@@ -297,7 +303,7 @@ class NetworkManager:
                     if self.running:
                         logger.error(f"Error in receive_game_state thread: {e}")
 
-    def verify_connection(self):
+    def verify_connection(self) -> bool:
         """Verify that the connection to the server is actually running on the specified port
         by sending a name check request and waiting for a response.
         Returns True if the server responds, False otherwise.
@@ -343,7 +349,7 @@ class NetworkManager:
             logger.error(f"Error verifying connection: {e}")
             return False
 
-    def send_agent_ids(self, nickname, agent_sciper, game_mode):
+    def send_agent_ids(self, nickname: str, agent_sciper: str, game_mode: str) -> bool:
         """Send agent name and sciper to server"""
         message = {
             "type": "agent_ids",
@@ -353,17 +359,17 @@ class NetworkManager:
         }
         return self.send_message(message)
 
-    def send_direction_change(self, direction):
+    def send_direction_change(self, direction: tuple[int, int]) -> bool:
         """Send direction change to server"""
         message = {"action": "direction", "direction": direction}
         return self.send_message(message)
 
-    def send_spawn_request(self):
+    def send_spawn_request(self) -> bool:
         """Send spawn request to server"""
         message = {"action": "respawn"}
         return self.send_message(message)
 
-    def send_drop_wagon_request(self):
+    def send_drop_wagon_request(self) -> bool:
         """Send request to drop passenger"""
         message = {"action": "drop_wagon"}
         return self.send_message(message)
