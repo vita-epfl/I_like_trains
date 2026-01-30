@@ -18,7 +18,7 @@ ORIGINAL_GAME_HEIGHT = 400
 
 ORIGINAL_GRID_NB = 20
 
-TRAINS_PASSENGER_RATIO = 1.0  # Number of trains per passenger
+TRAINS_PASSENGER_RATIO = 1  # Number of trains per passenger
 
 GAME_SIZE_INCREMENT_RATIO = (
     0.05  # Increment per train, the bigger the number, the bigger the screen grows
@@ -78,6 +78,7 @@ class Game:
         self.last_remaining_time = None  # Track the last remaining time sent to clients
 
         self.desired_passengers = 0
+        self._passengers_need_full_update = False  # Track if we need to send full passenger list
 
         self.lock = threading.Lock()
 
@@ -119,18 +120,28 @@ class Game:
 
         # Add passengers if modified - only send dirty passengers for efficiency
         if self._dirty["passengers"]:
-            dirty_passengers = []
-            for p in self.passengers:
-                p_data = p.to_dict_if_dirty(include_id=True)
-                if p_data:
-                    dirty_passengers.append(p_data)
-            
-            # If we have dirty passengers, send them; otherwise send full list on first update
-            if dirty_passengers:
-                state["passengers"] = dirty_passengers
+            # If passengers were removed, send full list with special flag to force client replacement
+            if self._passengers_need_full_update:
+                state["passengers"] = [p.to_dict(include_id=True) for p in self.passengers]
+                state["passengers_full_update"] = True  # Signal client to replace entire list
+                logger.debug(f"Sending all {len(self.passengers)} passengers to clients (full replacement - passengers removed)")
+                self._passengers_need_full_update = False
             else:
-                # Fallback: send all passengers (e.g., on initial state)
-                state["passengers"] = [p.to_dict() for p in self.passengers]
+                # Otherwise, send only dirty passengers with IDs for delta update
+                dirty_passengers = []
+                for p in self.passengers:
+                    p_data = p.to_dict_if_dirty(include_id=True)
+                    if p_data:
+                        dirty_passengers.append(p_data)
+                
+                # If we have dirty passengers, send them; otherwise send full list with IDs
+                if dirty_passengers:
+                    state["passengers"] = dirty_passengers
+                    logger.debug(f"Sending {len(dirty_passengers)} dirty passengers to clients (total: {len(self.passengers)})")
+                else:
+                    # Fallback: send all passengers with IDs for consistency
+                    state["passengers"] = [p.to_dict(include_id=True) for p in self.passengers]
+                    logger.debug(f"Sending all {len(self.passengers)} passengers to clients (full update)")
             self._dirty["passengers"] = False
 
         # Add modified trains
@@ -273,30 +284,30 @@ class Game:
     def update_passengers_count(self):
         """Update the number of passengers based on the number of trains"""
         # Calculate the desired number of passengers based on the number of alive trains
-        self.desired_passengers = (
-            len(
-                [
-                    train
-                    for train in self.trains.values()
-                    if self.contains_train(train.nickname)
-                ] # This is a list of all trains that are still alive in the game
-            )
-        ) // TRAINS_PASSENGER_RATIO
+        alive_trains = [
+            train
+            for train in self.trains.values()
+            if self.contains_train(train.nickname)
+        ]
+        self.desired_passengers = len(alive_trains) // TRAINS_PASSENGER_RATIO
+        
+        logger.debug(f"update_passengers_count: Alive trains: {len(alive_trains)}, Current passengers: {len(self.passengers)}, Desired: {self.desired_passengers}")
 
-        # Add or remove passengers if necessary
+        # Only add passengers if we need more - never remove them here
+        # Passengers will naturally decrease when picked up and not respawned
         changed = False
         while len(self.passengers) < self.desired_passengers:
             new_passenger = Passenger(self)
             self.passengers.append(new_passenger)
             changed = True
-            logger.debug("Added new passenger")
+            logger.debug(f"Added new passenger (total now: {len(self.passengers)})")
 
         if changed:
             self._dirty["passengers"] = True
 
     def add_train(self, nickname):
         """Add a new train to the game"""
-        logger.debug(f"Adding train {nickname}")
+        # logger.debug(f"Adding train {nickname}")
         # Check the cooldown
         if nickname in self.dead_trains:
             del self.dead_trains[nickname]
@@ -332,12 +343,12 @@ class Game:
             
             # For tickrate < standard (e.g. 30), the ratio > 1, making cooldown longer in real time
             # For tickrate > standard (e.g. 240), the ratio < 1, making cooldown shorter in real time
-            cooldown_ticks = int(self.config.respawn_cooldown_seconds * REFERENCE_TICK_RATE)
-            expected_respawn_tick = self.current_tick + cooldown_ticks
+            # cooldown_ticks = int(self.config.respawn_cooldown_seconds * REFERENCE_TICK_RATE)
+            # expected_respawn_tick = self.current_tick + cooldown_ticks
             
-            real_seconds = cooldown_ticks / self.config.tick_rate
-            logger.debug(f"Train {nickname} died at tick {self.current_tick}, reason: {death_reason}")
-            logger.debug(f"Expected respawn at tick {expected_respawn_tick} (after {cooldown_ticks} ticks, {real_seconds:.2f}s real time)")
+            # real_seconds = cooldown_ticks / self.config.tick_rate
+            # logger.debug(f"Train {nickname} died at tick {self.current_tick}, reason: {death_reason}")
+            # logger.debug(f"Expected respawn at tick {expected_respawn_tick} (after {cooldown_ticks} ticks, {real_seconds:.2f}s real time)")
 
             # Clean up the last delivery time for this train
             self.last_delivery_tick.pop(nickname, None)
@@ -386,8 +397,8 @@ class Game:
         return 0
 
     def contains_train(self, nickname):
-        """Check if a train is in the game"""
-        return nickname in self.trains
+        """Check if a train is in the game and alive"""
+        return nickname in self.trains and self.trains[nickname].alive
 
     def check_collisions(self):
         # Créer une copie du dictionnaire pour éviter de le modifier pendant l'itération
@@ -402,17 +413,19 @@ class Game:
             )
 
             # Check for passenger collisions
-            for passenger in self.passengers:
+            for passenger in self.passengers[:]:
                 if train.position == passenger.position:
                     train.add_wagons(nb_wagons=passenger.value)
-
-                    desired_passengers = (len(self.trains)) // TRAINS_PASSENGER_RATIO
-                    if len(self.passengers) <= desired_passengers:
+                    
+                    # Only respawn if we need more passengers, otherwise remove
+                    if len(self.passengers) <= self.desired_passengers:
                         passenger.respawn()
+                        logger.debug(f"Passenger picked up by {train.nickname} and respawned at {passenger.position}")
                     else:
-                        # Remove the passenger from the passengers list if there are too many
                         self.passengers.remove(passenger)
                         self._dirty["passengers"] = True
+                        self._passengers_need_full_update = True
+                        logger.debug(f"Passenger picked up by {train.nickname} and removed (excess). Now {len(self.passengers)} passengers")
 
             # Check for delivery zone collisions
             if self.delivery_zone.contains(train.position):
