@@ -59,24 +59,25 @@ class PerformanceProfiler:
                 logger.error(f"Error in monitoring loop: {e}")
     
     def _collect_system_metrics(self):
-        with self.lock:
+        # Collect metrics OUTSIDE the lock to avoid blocking main thread
+        # cpu_percent(interval=0.1) blocks for 100ms!
+        try:
             timestamp = time.time() - self.start_time
+            cpu_percent = self.process.cpu_percent(interval=0.1)
+            memory_info = self.process.memory_info()
+            memory_mb = memory_info.rss / (1024 * 1024)
+            num_threads = self.process.num_threads()
             
-            try:
-                cpu_percent = self.process.cpu_percent(interval=0.1)
-                memory_info = self.process.memory_info()
-                memory_mb = memory_info.rss / (1024 * 1024)
-                
-                num_threads = self.process.num_threads()
-                
+            # Only hold lock briefly to append data
+            with self.lock:
                 self.metrics["system"].append({
                     "timestamp": timestamp,
                     "cpu_percent": cpu_percent,
                     "memory_mb": memory_mb,
                     "num_threads": num_threads
                 })
-            except Exception as e:
-                logger.error(f"Error collecting system metrics: {e}")
+        except Exception as e:
+            logger.error(f"Error collecting system metrics: {e}")
     
     def start_timer(self, name: str):
         if not self.enabled:
@@ -133,6 +134,22 @@ class PerformanceProfiler:
                 "timestamp": timestamp,
                 "frame_time_ms": frame_time_ms
             })
+    
+    def get_current_fps(self) -> float:
+        """Get current FPS based on recent frame times (last 30 frames)"""
+        with self.lock:
+            if "frames" not in self.metrics or not self.metrics["frames"]:
+                return 0.0
+            
+            recent_frames = self.metrics["frames"][-30:]
+            if not recent_frames:
+                return 0.0
+            
+            avg_frame_time = sum(f["frame_time_ms"] for f in recent_frames) / len(recent_frames)
+            if avg_frame_time <= 0:
+                return 0.0
+            
+            return 1000.0 / avg_frame_time
     
     def record_network_event(self, event_type: str, size_bytes: int = 0):
         if not self.enabled:

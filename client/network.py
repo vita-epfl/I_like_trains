@@ -48,6 +48,10 @@ class NetworkManager:
         self.running: bool = True
         self.receive_thread: threading.Thread | None = None
         self.last_ping_time: float = 0
+        
+        # RTT tracking for ping display
+        self.last_rtt_ms: float = 0.0
+        self.ping_send_time: float = 0.0
 
     def connect(self) -> bool:
         """Establish connection with server"""
@@ -205,6 +209,9 @@ class NetworkManager:
                             self.last_ping_time = time.time()
 
                         elif message_type == "pong":
+                            # Calculate RTT from our ping
+                            if self.ping_send_time > 0:
+                                self.last_rtt_ms = (time.time() - self.ping_send_time) * 1000
                             # Mark that we received a response to our ping
                             self.client.ping_response_received = True
 
@@ -339,6 +346,7 @@ class NetworkManager:
 
             # Send a ping request (this is allowed for unregistered clients)
             check_message = {"type": "ping"}
+            self.ping_send_time = time.time()
             success = self.send_message(check_message)
 
             if not success:
