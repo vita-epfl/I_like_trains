@@ -689,6 +689,22 @@ class RoomProcessRunner:
                 elapsed = time.time() - game_start_time
                 target_time = (update_count + 1) * real_seconds_per_tick
                 sleep_time = max(0, target_time - elapsed)
+                
+                # Log if we're falling behind (negative sleep time means we're late)
+                if sleep_time == 0 and elapsed > target_time:
+                    behind_ms = (elapsed - target_time) * 1000
+                    if behind_ms > 5:  # Only log if more than 5ms behind
+                        self.logger.debug(f"Tick {update_count + 1}: Behind by {behind_ms:.1f}ms")
+                    
+                    # If we fall too far behind, reset timing to prevent rapid catch-up
+                    # which causes trains to appear to accelerate
+                    MAX_CATCHUP_MS = 20  # Max allowed catch-up before resetting (~1 tick)
+                    if behind_ms > MAX_CATCHUP_MS:
+                        # Reset game_start_time to current time minus expected elapsed
+                        # This effectively "skips" the lag and resumes normal timing
+                        game_start_time = time.time() - target_time
+                        self.logger.debug(f"Tick {update_count + 1}: Reset timing (was {behind_ms:.1f}ms behind)")
+                
                 if sleep_time > 0:
                     time.sleep(sleep_time)
         
