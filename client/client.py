@@ -132,7 +132,7 @@ class Client:
 
         if self.config.add_suffix_to_nickname:
             # Add random suffix
-            self.nickname += f"_{random.randint(0, 999999)}"
+            self.nickname += f"_{random.randint(0, 9999)}"
 
         if self.game_mode != GameMode.OBSERVER:
             logger.debug("Initializing agent")
