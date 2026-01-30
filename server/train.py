@@ -27,7 +27,7 @@ BOOST_INTENSITY = 3  # Intensity of speed boost
 
 class Train:
     def __init__(self, x, y, nickname, color, handle_train_death, tick_rate, reference_tick_rate):
-        server_logger.debug(f"Creating train {nickname} at position {x}, {y}")
+        # server_logger.debug(f"Creating train {nickname} at position {x}, {y}")
         self.position = (x, y)
         self.wagons = []
         self.new_direction = Move.RIGHT.value
@@ -303,7 +303,7 @@ class Train:
                 collision_msg = (
                     f"Train {self.nickname} collided with its own wagon at {wagon_pos}"
                 )
-                server_logger.info(collision_msg)
+                # server_logger.info(collision_msg)
                 death_reason = "self_collision"
                 self.handle_death([self.nickname], death_reason)
                 return True
@@ -317,7 +317,7 @@ class Train:
                 collision_msg = (
                     f"Train {self.nickname} collided with train {train.nickname}"
                 )
-                server_logger.info(collision_msg)
+                # server_logger.info(collision_msg)
                 death_reason = "collision_with_train"
                 self.handle_death([self.nickname, train.nickname], death_reason)
                 return True
@@ -326,7 +326,7 @@ class Train:
             for wagon_pos in train.wagons:
                 if self.position == wagon_pos:
                     collision_msg = f"Train {self.nickname} collided with wagon of train {train.nickname}"
-                    server_logger.info(collision_msg)
+                    # server_logger.info(collision_msg)
                     death_reason = "collision_with_wagon"
                     self.handle_death([self.nickname], death_reason)
                     return True

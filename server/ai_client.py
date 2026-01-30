@@ -50,7 +50,7 @@ class AINetworkInterface:
 
     def send_spawn_request(self):
         """Request to spawn the train using the server's function"""
-        logger.debug(f"AI client {self.nickname} sending spawn request")
+        # logger.debug(f"AI client {self.nickname} sending spawn request")
         if self.nickname not in self.room.game.trains:
             cooldown = self.room.game.get_train_respawn_cooldown(self.nickname)
             if cooldown <= 0:
@@ -75,7 +75,7 @@ class AIClient:
             is_dead: Whether the AI is dead
             agent_dir: The directory of the agent implementation
         """
-        logger.debug(f"Initializing AI client {nickname}, waiting_for_respawn: {waiting_for_respawn}, is_dead: {is_dead}")
+        # logger.debug(f"Initializing AI client {nickname}, waiting_for_respawn: {waiting_for_respawn}, is_dead: {is_dead}")
         self.room = room
         self.game = room.game
         self.nickname = nickname  # The AI agent name
@@ -92,7 +92,7 @@ class AIClient:
 
         # Initialize agent if path_to_agent is provided
         try:
-            logger.info(f"Trying to import AI agent for {nickname}")
+            # logger.info(f"Trying to import AI agent for {nickname}")
             # Check if module_path is defined
             if ai_agent_file_name.endswith(".py"):
                 # Remove .py extension
@@ -100,7 +100,7 @@ class AIClient:
 
             module = importlib.import_module(agent_dir + "." + ai_agent_file_name)
             self.agent = module.Agent(nickname, self.network, logger="server.ai_agent", timeout=1 / self.room.config.tick_rate)
-            logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name}")
+            # logger.info(f"AI agent {nickname} initialized using {ai_agent_file_name}")
 
         except ImportError as e:
             logger.error(f"Failed to import AI agent for {nickname}: {e}")
@@ -112,7 +112,7 @@ class AIClient:
         self.agent.delivery_zone = self.game.delivery_zone.to_dict()
 
         self.running = True
-        logger.debug(f"AI client {nickname} started")
+        # logger.debug(f"AI client {nickname} started")
 
     def update_state(self, state_data):
         """Update the state from the game"""
@@ -188,5 +188,5 @@ class AIClient:
 
     def stop(self):
         """Stop the AI client"""
-        logger.debug(f"Stopping AI client {self.nickname}")
+        # logger.debug(f"Stopping AI client {self.nickname}")
         self.running = False

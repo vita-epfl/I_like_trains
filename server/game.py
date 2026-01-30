@@ -457,8 +457,8 @@ class Game:
                 cooldown_ticks = int(self.config.respawn_cooldown_seconds * REFERENCE_TICK_RATE)
                 
                 if self.current_tick >= death_tick + cooldown_ticks:
-                    real_time_elapsed = (self.current_tick - death_tick) / self.config.tick_rate
-                    logger.info(f"Train {nickname} cooldown expired at tick {self.current_tick} (after {self.current_tick - death_tick} ticks, {real_time_elapsed:.2f}s real time)")
+                    # real_time_elapsed = (self.current_tick - death_tick) / self.config.tick_rate
+                    # logger.info(f"Train {nickname} cooldown expired at tick {self.current_tick} (after {self.current_tick - death_tick} ticks, {real_time_elapsed:.2f}s real time)")
                     
                     # Remove from death ticks dictionary
                     if nickname in self.train_death_ticks:
@@ -468,11 +468,11 @@ class Game:
                     if nickname in self.ai_clients:
                         ai_client = self.ai_clients[nickname]
                         if ai_client.is_dead and ai_client.waiting_for_respawn:
-                            logger.info(f"Respawning AI client {nickname} after cooldown")
+                            # logger.info(f"Respawning AI client {nickname} after cooldown")
                             if self.add_train(nickname):
                                 ai_client.waiting_for_respawn = False
                                 ai_client.is_dead = False
-                                logger.debug(f"AI client {nickname} respawned after cooldown")
+                                # logger.debug(f"AI client {nickname} respawned after cooldown")
 
             # Handle automatic respawn for AI clients
             for ai_name, ai_client in self.ai_clients.items():
@@ -484,5 +484,5 @@ class Game:
                         if self.add_train(ai_name):
                             ai_client.waiting_for_respawn = False
                             ai_client.is_dead = False
-                            logger.info(f"AI client {ai_name} respawned")
+                            # logger.info(f"AI client {ai_name} respawned")
                             
