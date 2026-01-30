@@ -160,6 +160,7 @@ class Client:
 
         self.ping_response_received: bool = False
         self.server_disconnected: bool = False
+        self.last_ping_send_time: float = 0.0
 
         self.profiler = PerformanceProfiler(
             enabled=self.config.enable_profiling,
@@ -265,6 +266,8 @@ class Client:
             if frame_count % 60 == 0:
                 self.profiler.record_metric("client", "trains_count", len(self.trains))
                 self.profiler.record_metric("client", "passengers_count", len(self.passengers))
+                # Send periodic ping for RTT measurement (every ~1 second)
+                self.send_ping_for_rtt()
 
         # Close connection
         self.network.disconnect()
@@ -329,6 +332,15 @@ class Client:
         self.game_start_time = time.time()  # Use client's time for consistency
 
         logger.info(f"Game lifetime set to {self.game_life_time} seconds")
+
+    def send_ping_for_rtt(self) -> None:
+        """Send a ping to measure RTT"""
+        current_time = time.time()
+        # Only send if at least 1 second since last ping
+        if current_time - self.last_ping_send_time >= 1.0:
+            self.network.ping_send_time = current_time
+            self.network.send_message({"type": "ping"})
+            self.last_ping_send_time = current_time
 
     def handle_server_disconnection(self) -> None:
         """Handle server disconnection gracefully"""

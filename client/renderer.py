@@ -34,6 +34,10 @@ class Renderer:
         # Text rendering cache to avoid expensive font.render() calls
         self.text_cache: dict[tuple, pygame.Surface] = {}
         self.font_cache: dict[tuple, pygame.font.Font] = {}
+        
+        # Frame time tracking for FPS display (when profiling is disabled)
+        self._last_frame_times: list[float] = []
+        self._last_frame_time: float = time.time()
 
     def draw_game(self) -> None:
         """Draws the game."""
@@ -43,6 +47,14 @@ class Renderer:
             return
 
         self.client.profiler.start_timer("render_total")
+        
+        # Track frame time for FPS display
+        current_time = time.time()
+        frame_time_ms = (current_time - self._last_frame_time) * 1000
+        self._last_frame_time = current_time
+        self._last_frame_times.append(frame_time_ms)
+        if len(self._last_frame_times) > 30:
+            self._last_frame_times.pop(0)
         
         # Fill screen with background color (white)
         self.client.screen.fill((255, 255, 255))
@@ -130,6 +142,9 @@ class Renderer:
         self.leaderboard_update_counter += 1
         self.draw_leaderboard()
         self.client.profiler.end_timer("render_leaderboard")
+
+        # Draw FPS/Ping overlay in top-left corner of game area
+        self.draw_fps_overlay()
 
         if self.client.is_dead and not self.client.in_waiting_room:
             self.draw_death_screen()
@@ -686,8 +701,7 @@ class Renderer:
             pygame.draw.rect(self.client.screen, (50, 50, 150), time_rect)
 
             # Draw time text
-            time_font = pygame.font.Font(None, 24)
-            time_surface = time_font.render(time_text, True, (255, 255, 255))
+            time_surface = self.get_cached_text(time_text, 24, (255, 255, 255))
             time_text_rect = time_surface.get_rect(
                 center=(
                     self.client.game_width
@@ -697,6 +711,85 @@ class Renderer:
                 )
             )
             self.client.screen.blit(time_surface, time_text_rect)
+            y_offset += 40
+
+
+    def draw_fps_overlay(self) -> None:
+        """Draw discrete FPS and Ping overlay in bottom-right corner of entire screen"""
+        # Get metrics
+        fps = self.client.profiler.get_current_fps() if hasattr(self.client.profiler, 'get_current_fps') else 0
+        # Fallback: calculate FPS from pygame clock if profiler returns 0
+        if fps == 0 and hasattr(self, '_last_frame_times'):
+            if len(self._last_frame_times) > 0:
+                avg_time = sum(self._last_frame_times) / len(self._last_frame_times)
+                fps = 1000.0 / avg_time if avg_time > 0 else 0
+        rtt_ms = self.client.network.last_rtt_ms
+        
+        # Discrete muted gray color for both
+        text_color = (120, 120, 120)
+        
+        # Position in bottom-right corner of entire screen
+        x_pos = self.client.screen_width - 80
+        y_pos = self.client.screen_height - 30
+        
+        # Draw semi-transparent background
+        bg_rect = pygame.Rect(x_pos - 3, y_pos - 2, 78, 30)
+        bg_surface = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+        bg_surface.fill((255, 255, 255, 120))
+        self.client.screen.blit(bg_surface, bg_rect)
+        
+        # Draw FPS
+        fps_text = f"FPS: {fps:.0f}"
+        fps_surface = self.get_cached_text(fps_text, 16, text_color)
+        self.client.screen.blit(fps_surface, (x_pos, y_pos))
+        
+        # Draw Ping below FPS
+        ping_text = f"Ping: {rtt_ms:.0f}ms"
+        ping_surface = self.get_cached_text(ping_text, 16, text_color)
+        self.client.screen.blit(ping_surface, (x_pos, y_pos + 13))
+
+    def draw_network_stats(self, y_offset: int) -> None:
+        """Draw network statistics (ping/RTT and FPS)"""
+        # Get RTT from network manager
+        rtt_ms = self.client.network.last_rtt_ms
+        
+        # Color based on latency (green < 50ms, yellow < 100ms, red >= 100ms)
+        if rtt_ms < 50:
+            ping_color = (0, 200, 0)  # Green
+        elif rtt_ms < 100:
+            ping_color = (255, 200, 0)  # Yellow
+        else:
+            ping_color = (255, 50, 50)  # Red
+        
+        ping_text = f"Ping: {rtt_ms:.0f}ms"
+        ping_surface = self.get_cached_text(ping_text, 20, ping_color)
+        self.client.screen.blit(
+            ping_surface,
+            (
+                self.client.game_width + 2 * self.client.game_screen_padding + 10,
+                y_offset + 15,
+            ),
+        )
+        
+        # Draw FPS
+        fps = self.client.profiler.get_current_fps() if hasattr(self.client.profiler, 'get_current_fps') else 0
+        if fps > 0:
+            if fps >= 55:
+                fps_color = (0, 200, 0)  # Green
+            elif fps >= 30:
+                fps_color = (255, 200, 0)  # Yellow
+            else:
+                fps_color = (255, 50, 50)  # Red
+            
+            fps_text = f"FPS: {fps:.0f}"
+            fps_surface = self.get_cached_text(fps_text, 20, fps_color)
+            self.client.screen.blit(
+                fps_surface,
+                (
+                    self.client.game_width + 2 * self.client.game_screen_padding + 100,
+                    y_offset + 15,
+                ),
+            )
 
     def draw_game_over_screen(self) -> None:
         """Display the game over screen with final scores"""
