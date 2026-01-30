@@ -162,6 +162,7 @@ class Renderer:
         """
         Draw passengers and their values
         """
+        # logger.debug(f"Rendering {len(self.client.passengers)} passengers")  # Disabled for performance
         for passenger in self.client.passengers:
             if isinstance(passenger, dict):
                 if "position" in passenger:
@@ -195,9 +196,8 @@ class Renderer:
                 self.client.cell_size // 2 - 2,  # Circle radius slightly smaller
             )
 
-            # Draw the value text above the passenger
-            font = pygame.font.Font(None, 24)  # Default pygame font, size 24
-            text = font.render(str(value), True, (0, 0, 0))  # Black text
+            # Draw the value text above the passenger (using cached text for performance)
+            text = self.get_cached_text(str(value), 24, (0, 0, 0))
             text_rect = text.get_rect(
                 center=(x + self.client.cell_size // 2, y - 5)
             )  # Position above passenger
