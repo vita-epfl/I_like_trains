@@ -124,7 +124,7 @@ class Game:
             if self._passengers_need_full_update:
                 state["passengers"] = [p.to_dict(include_id=True) for p in self.passengers]
                 state["passengers_full_update"] = True  # Signal client to replace entire list
-                logger.debug(f"Sending all {len(self.passengers)} passengers to clients (full replacement - passengers removed)")
+                # logger.debug(f"Sending all {len(self.passengers)} passengers to clients (full replacement - passengers removed)")
                 self._passengers_need_full_update = False
             else:
                 # Otherwise, send only dirty passengers with IDs for delta update
@@ -137,11 +137,11 @@ class Game:
                 # If we have dirty passengers, send them; otherwise send full list with IDs
                 if dirty_passengers:
                     state["passengers"] = dirty_passengers
-                    logger.debug(f"Sending {len(dirty_passengers)} dirty passengers to clients (total: {len(self.passengers)})")
+                    # logger.debug(f"Sending {len(dirty_passengers)} dirty passengers to clients (total: {len(self.passengers)})")
                 else:
                     # Fallback: send all passengers with IDs for consistency
                     state["passengers"] = [p.to_dict(include_id=True) for p in self.passengers]
-                    logger.debug(f"Sending all {len(self.passengers)} passengers to clients (full update)")
+                    # logger.debug(f"Sending all {len(self.passengers)} passengers to clients (full update)")
             self._dirty["passengers"] = False
 
         # Add modified trains
@@ -291,7 +291,7 @@ class Game:
         ]
         self.desired_passengers = len(alive_trains) // TRAINS_PASSENGER_RATIO
         
-        logger.debug(f"update_passengers_count: Alive trains: {len(alive_trains)}, Current passengers: {len(self.passengers)}, Desired: {self.desired_passengers}")
+        # logger.debug(f"update_passengers_count: Alive trains: {len(alive_trains)}, Current passengers: {len(self.passengers)}, Desired: {self.desired_passengers}")
 
         # Only add passengers if we need more - never remove them here
         # Passengers will naturally decrease when picked up and not respawned
@@ -300,7 +300,7 @@ class Game:
             new_passenger = Passenger(self)
             self.passengers.append(new_passenger)
             changed = True
-            logger.debug(f"Added new passenger (total now: {len(self.passengers)})")
+            # logger.debug(f"Added new passenger (total now: {len(self.passengers)})")
 
         if changed:
             self._dirty["passengers"] = True
@@ -420,12 +420,12 @@ class Game:
                     # Only respawn if we need more passengers, otherwise remove
                     if len(self.passengers) <= self.desired_passengers:
                         passenger.respawn()
-                        logger.debug(f"Passenger picked up by {train.nickname} and respawned at {passenger.position}")
+                        # logger.debug(f"Passenger picked up by {train.nickname} and respawned at {passenger.position}")
                     else:
                         self.passengers.remove(passenger)
                         self._dirty["passengers"] = True
                         self._passengers_need_full_update = True
-                        logger.debug(f"Passenger picked up by {train.nickname} and removed (excess). Now {len(self.passengers)} passengers")
+                        # logger.debug(f"Passenger picked up by {train.nickname} and removed (excess). Now {len(self.passengers)} passengers")
 
             # Check for delivery zone collisions
             if self.delivery_zone.contains(train.position):

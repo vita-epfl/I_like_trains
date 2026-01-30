@@ -53,24 +53,24 @@ class GameState:
         if "passengers" in data:
             # Update passengers - merge by ID if present, otherwise replace entire list
             incoming_passengers = data["passengers"]
-            logger.debug(f"Received {len(incoming_passengers)} passengers from server. Current: {len(self.client.passengers)}")
+            # logger.debug(f"Received {len(incoming_passengers)} passengers from server. Current: {len(self.client.passengers)}")
             
             # Check if this is a full replacement (when passengers were removed on server)
             if data.get("passengers_full_update", False):
-                logger.debug("Full replacement: replacing entire passenger list (passengers removed)")
+                # logger.debug("Full replacement: replacing entire passenger list (passengers removed)")
                 self.client.passengers = incoming_passengers
             elif incoming_passengers and len(incoming_passengers) > 0 and "id" in incoming_passengers[0]:
                 # Delta update: merge by ID
-                logger.debug(f"Delta update: merging {len(incoming_passengers)} passengers by ID")
+                # logger.debug(f"Delta update: merging {len(incoming_passengers)} passengers by ID")
                 passenger_dict = {p["id"]: p for p in self.client.passengers if "id" in p}
                 for p in incoming_passengers:
                     if "id" in p:
                         passenger_dict[p["id"]] = p
                 self.client.passengers = list(passenger_dict.values())
-                logger.debug(f"After merge: {len(self.client.passengers)} passengers")
+                # logger.debug(f"After merge: {len(self.client.passengers)} passengers")
             else:
                 # Full update: replace entire list (for initial state or when no IDs)
-                logger.debug("Full update: replacing entire passenger list")
+                # logger.debug("Full update: replacing entire passenger list")
                 self.client.passengers = incoming_passengers
             
             if self.game_mode == GameMode.AGENT and self.client.agent is not None:

@@ -152,7 +152,7 @@ class Train:
             and not self.speed_boost_active
             and len(self.wagons) > 0
         ):
-            server_logger.debug(f"Applying speed boost to train {self.nickname}")
+            # server_logger.debug(f"Applying speed boost to train {self.nickname}")
             # Get the last wagon position
             last_wagon_pos = self.wagons[-1]
 
@@ -167,7 +167,7 @@ class Train:
             self.speed_boost_timer = BOOST_DURATION  # 1 second boost
 
             # Start cooldown
-            server_logger.debug(f"Starting cooldown for train {self.nickname}")
+            # server_logger.debug(f"Starting cooldown for train {self.nickname}")
             self.boost_cooldown_active = True
             self.start_boost_cooldown_tick = self.current_tick
             self._dirty["boost_cooldown_active"] = True
