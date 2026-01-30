@@ -309,6 +309,7 @@ class Game:
                 train_color = self.train_colors[nickname]
             else:
                 train_color = generate_random_non_blue_color(self.random)
+                self.train_colors[nickname] = train_color
 
             self.trains[nickname] = Train(
                 spawn_pos[0],
