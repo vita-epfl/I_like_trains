@@ -262,15 +262,25 @@ class GameState:
 
             # Store the game over data
             self.client.game_over = True
-            self.client.game_over_data = data
-
-            # Extract final scores
-            self.client.final_scores = data.get("final_scores", [])
+            
+            # Handle both old format (dict with final_scores) and new format (list of scores)
+            if isinstance(data, list):
+                # New format: data is directly the scores list
+                self.client.final_scores = data
+                self.client.game_over_data = {"message": "Time limit reached.", "final_scores": data}
+            elif isinstance(data, dict):
+                # Old format: data is a dict with final_scores key
+                self.client.final_scores = data.get("final_scores", [])
+                self.client.game_over_data = data
+            else:
+                self.client.final_scores = []
+                self.client.game_over_data = {}
 
             # Update the leaderboard with final scores
             self.client.leaderboard_data = self.client.final_scores
 
-            logger.info(f"Game over: {data.get('message', 'Time limit reached')}")
+            message = self.client.game_over_data.get("message", "Time limit reached.") if isinstance(self.client.game_over_data, dict) else "Time limit reached."
+            logger.info(f"Game over: {message}")
             logger.info(f"Final scores: {self.client.final_scores}")
 
         except Exception as e:

@@ -175,6 +175,11 @@ class RoomProcessManager:
                 if msg['type'] == 'send_to_client':
                     addr = tuple(msg['addr'])  # Convert list back to tuple
                     data = msg['data']
+                    
+                    # Skip AI clients - they don't need network messages
+                    if len(addr) == 2 and addr[0] == "AI":
+                        continue
+                    
                     try:
                         self.server_socket.sendto(data.encode(), addr)
                     except Exception as e:
@@ -553,7 +558,7 @@ class RoomProcessRunner:
                 ai_addr = ("AI", ai_nickname)
                 self.clients[ai_addr] = ai_nickname
                 
-                self.logger.debug(f"Added bot {ai_nickname}")
+                # self.logger.debug(f"Added bot {ai_nickname}")
     
     def _get_available_ai_name(self, agent) -> str:
         """Get an available AI name"""

@@ -802,7 +802,7 @@ class Renderer:
 
         # Draw message
         font_message = pygame.font.Font(None, 36)
-        if self.client.game_over_data:
+        if self.client.game_over_data and isinstance(self.client.game_over_data, dict):
             message = self.client.game_over_data.get(
                 "message", "Time limit reached."
             )

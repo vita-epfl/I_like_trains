@@ -103,7 +103,7 @@ class Train:
             required_ticks = int((BOOST_COOLDOWN_DURATION + BOOST_DURATION) * self.reference_tick_rate)
             
             if ticks_elapsed >= required_ticks:
-                server_logger.debug(f"Resetting cooldown for train {self.nickname}")
+                # server_logger.debug(f"Resetting cooldown for train {self.nickname}")
                 # Reset cooldown
                 self.boost_cooldown_active = False
                 self._dirty["boost_cooldown_active"] = True
