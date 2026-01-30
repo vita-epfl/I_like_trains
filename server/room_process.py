@@ -330,6 +330,15 @@ class RoomProcessRunner:
         self.used_ai_names = set()
         self.used_nicknames = set()
         
+        # Initialize profiler
+        from common.performance_profiler import PerformanceProfiler
+        self.profiler = PerformanceProfiler(
+            enabled=config.enable_profiling,
+            output_dir=config.profiling_output_dir,
+            interval_seconds=config.profiling_interval_seconds,
+            profile_name=f"server_room_{room_id}"
+        )
+        
         self.logger.info(f"RoomProcessRunner initialized for room {room_id}")
     
     def _send_to_client(self, addr: tuple, data: str, compress: bool = True):
@@ -686,6 +695,11 @@ class RoomProcessRunner:
         # Game finished
         total_real_time = time.time() - game_start_time
         self.logger.info(f"Game completed: {update_count + 1} ticks in {total_real_time:.2f}s")
+        
+        # Stop profiler and save results
+        self.logger.info(f"Stopping profiler (enabled={self.profiler.enabled})...")
+        self.profiler.stop()
+        self.logger.info("Profiler stopped")
         
         self._end_game()
     

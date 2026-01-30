@@ -165,8 +165,10 @@ class PerformanceProfiler:
     
     def save_results(self):
         if not self.enabled:
+            logger.debug(f"Profiler {self.profile_name} not enabled, skipping save")
             return
         
+        logger.info(f"Saving profiling results for {self.profile_name}...")
         self.running = False
         if self.monitoring_thread:
             self.monitoring_thread.join(timeout=2.0)
@@ -174,6 +176,8 @@ class PerformanceProfiler:
         timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{self.profile_name}_{timestamp_str}.json"
         filepath = os.path.join(self.output_dir, filename)
+        
+        logger.debug(f"Profiler output path: {filepath}")
         
         with self.lock:
             summary = self._generate_summary()
@@ -188,15 +192,23 @@ class PerformanceProfiler:
             }
         
         try:
+            # Ensure directory exists
+            os.makedirs(self.output_dir, exist_ok=True)
+            
             with open(filepath, 'w') as f:
                 json.dump(output_data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            
             logger.info(f"Performance profiling results saved to: {filepath}")
             
             self._print_summary(summary)
             
             return filepath
         except Exception as e:
-            logger.error(f"Error saving profiling results: {e}")
+            logger.error(f"Error saving profiling results to {filepath}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def _generate_summary(self) -> Dict[str, Any]:
