@@ -31,6 +31,8 @@ from common.messages import (
 )
 from server.passenger import Passenger
 from server.room import Room
+from server.room_process import RoomProcessManager
+from common.version import EXPECTED_CLIENT_VERSION
 from server.train import BOOST_COOLDOWN_DURATION
 
 import pandas as pd
@@ -269,6 +271,10 @@ class Server:
         
         self.rooms = {}  # {room_id: Room}
         self.lock = threading.Lock()
+        
+        # Multiprocessing mode - each room runs in a separate process
+        self.use_multiprocessing = getattr(self.config, 'use_multiprocessing', False)
+        self.room_process_manager = None  # Initialized after socket creation
 
         host = self.config.host
 
@@ -288,6 +294,7 @@ class Server:
         self.addr_to_sciper = {}  # Maps client addresses to scipers
         self.addr_to_game_mode = {}  # Maps client addresses to game modes
         self.sciper_to_addr = {}  # Maps scipers to client addresses
+        self.sciper_to_room_id = {}  # Maps scipers to room IDs (for multiprocessing)
         self.client_last_activity = {}  # Maps client addresses to last activity timestamp
         self.disconnected_clients = (
             set()
@@ -301,9 +308,14 @@ class Server:
         if self.config.grading_mode:
             self.run_grading_mode()
             return
-        else:
-            # In normal mode, just create the first room
-            self.create_room(True, self.config.nb_players_per_room)
+        
+        # Initialize multiprocessing room manager if enabled
+        if self.use_multiprocessing:
+            self.room_process_manager = RoomProcessManager(self.server_socket, self.config)
+            self.logger.info("Multiprocessing mode enabled - rooms will run in separate processes")
+        
+        # In normal mode, just create the first room
+        self.create_room(True, self.config.nb_players_per_room)
 
         # Ping tracking for active connection checking
         self.ping_interval = self.config.client_timeout_seconds / 2
@@ -361,7 +373,8 @@ class Server:
 
     def create_room(self, running, nb_players_per_room, tqdm_message=None, current_run_index=None, bot_seed=None):
         """
-        Create a new room with specified number of clients
+        Create a new room with specified number of clients.
+        If multiprocessing is enabled, creates a room in a separate process.
         """
         room_id = str(uuid.uuid4())[:8]
 
@@ -375,6 +388,19 @@ class Server:
         if self.config.grading_mode:
             self.current_nb_players = nb_players_per_room
 
+        # Use multiprocessing if enabled (not in grading mode)
+        if self.use_multiprocessing and self.room_process_manager and not self.config.grading_mode:
+            handle = self.room_process_manager.create_room_process(
+                room_id=room_id,
+                nb_players_max=nb_players_per_room,
+                bot_seed=bot_seed,
+                grading_mode=False,
+            )
+            # Store handle in rooms dict for compatibility
+            self.rooms[room_id] = handle
+            self.logger.info(f"Created multiprocessing room {room_id}")
+            return handle
+
         new_room = Room(
             self.config,
             room_id,
@@ -386,10 +412,10 @@ class Server:
             self.addr_to_sciper,
             self.record_disconnection,
             tqdm_message,
-            grading_scores=self.grading_scores if hasattr(self, 'grading_scores') else None,  # Pass just the scores dictionary
-            run_results=self.run_results if hasattr(self, 'run_results') else None,  # Pass just the run results list
-            current_run_index=current_run_index,  # Pass current run index
-            current_nb_players=nb_players_per_room,  # Pass current number of players
+            grading_scores=self.grading_scores if hasattr(self, 'grading_scores') else None,
+            run_results=self.run_results if hasattr(self, 'run_results') else None,
+            current_run_index=current_run_index,
+            current_nb_players=nb_players_per_room,
             bot_seed=bot_seed,
         )
 
@@ -398,8 +424,18 @@ class Server:
 
     def get_available_room(self):
         """Get an available room or create a new one if needed"""
-        # First try to find a non-full room
+        # Handle multiprocessing mode
+        if self.use_multiprocessing and self.room_process_manager:
+            handle = self.room_process_manager.get_available_room()
+            if handle:
+                return handle
+            return self.create_room(True, self.config.nb_players_per_room)
+        
+        # First try to find a non-full room (threading mode)
         for room in self.rooms.values():
+            # Skip RoomProcessHandle objects (handled above)
+            if not hasattr(room, 'is_full'):
+                continue
             if (
                 not room.is_full()
                 and not room.game_thread
@@ -456,13 +492,21 @@ class Server:
                 time.sleep(0.1)
 
     def find_client_room(self, agent_sciper):
+        # In multiprocessing mode, use sciper->room_id mapping
+        if self.use_multiprocessing and self.room_process_manager:
+            room_id = self.sciper_to_room_id.get(agent_sciper)
+            if room_id and room_id in self.rooms:
+                return self.rooms[room_id]
+        
+        # Standard threading mode
         for room in self.rooms.values():
-            for addr in room.clients:
-                if (
-                    addr in self.addr_to_sciper
-                    and self.addr_to_sciper[addr] == agent_sciper
-                ):
-                    return room
+            if hasattr(room, 'clients'):
+                for addr in room.clients:
+                    if (
+                        addr in self.addr_to_sciper
+                        and self.addr_to_sciper[addr] == agent_sciper
+                    ):
+                        return room
         return None
 
     def process_message(self, message, addr):
@@ -521,6 +565,14 @@ class Server:
             # Find which room this client belongs to
             client_room = self.find_client_room(agent_sciper)
             if client_room:
+                # In multiprocessing mode, forward to room process
+                if self.use_multiprocessing and self.room_process_manager:
+                    from server.room_process import RoomProcessHandle
+                    if isinstance(client_room, RoomProcessHandle):
+                        self.room_process_manager.send_to_room(
+                            client_room.room_id, message, addr
+                        )
+                        return
                 self.handle_client_message(addr, message, client_room)
         else:
             self.handle_client_message(addr, message, None)
@@ -581,9 +633,20 @@ class Server:
         # Check if the name exists in any room
         name_available = True
         room = None  # Initialize room to None to avoid reference error
+        reason = None  # Initialize reason
 
         for room_id, current_room in self.rooms.items():
             room = current_room  # Keep a reference to the last room
+            # Skip RoomProcessHandle objects (multiprocessing mode)
+            if not hasattr(current_room, 'clients'):
+                # Check in RoomProcessHandle.clients for multiprocessing mode
+                if hasattr(current_room, 'clients') and isinstance(current_room.clients, dict):
+                    if name_to_check in current_room.clients.values():
+                        name_available = False
+                        reason = "name already in use"
+                        self.logger.debug(f"Name '{name_to_check}' found in multiprocessing room {room_id}")
+                        break
+                continue
             for client_addr, nickname in current_room.clients.items():
                 if nickname == name_to_check:
                     # Check if the client with this name is in disconnected_clients
@@ -595,20 +658,22 @@ class Server:
                         continue
                     # Client is connected, name is not available
                     name_available = False
+                    reason = "name already in use"
                     self.logger.debug(f"Name '{name_to_check}' found in room {room_id}")
                     break
             if not name_available:
                 break
 
-        # Check if name not in the ai names (only if we have at least one room)
-        if room and name_available and name_to_check in room.AI_NAMES:
+        # Check if name not in the ai names (only if we have at least one room with AI_NAMES)
+        if room and name_available and hasattr(room, 'AI_NAMES') and name_to_check in room.AI_NAMES:
             name_available = False
+            reason = "name reserved for AI"
 
-        # Check if name starts with "Bot " (invalid)
+        # Check if name starts with "staff" (invalid)
         if name_available and name_to_check.startswith("staff"):
             name_available = False
-            self.logger.debug(f"Name '{name_to_check}' starts with 'staff', not available")
             reason = "name starts with 'staff'"
+            self.logger.debug(f"Name '{name_to_check}' starts with 'staff', not available")
 
         if addr:
             response = NameCheckMessage(available=name_available, reason=reason if not name_available else None)
@@ -728,6 +793,43 @@ class Server:
 
         # Assign to a room
         selected_room = self.get_available_room()
+        
+        # Handle multiprocessing mode
+        if self.use_multiprocessing and self.room_process_manager:
+            from server.room_process import RoomProcessHandle
+            # Check if selected_room is a handle or if we need to check after creation
+            if isinstance(selected_room, RoomProcessHandle):
+                # Add client via process manager
+                self.room_process_manager.add_client_to_room(
+                    selected_room.room_id, addr, nickname, game_mode
+                )
+                
+                # Track sciper to room mapping
+                self.sciper_to_room_id[agent_sciper] = selected_room.room_id
+                
+                if selected_room.first_client_join_time is None:
+                    selected_room.first_client_join_time = time.time()
+                
+                self.logger.info(
+                    f"Agent {nickname} (sciper: {agent_sciper}) joined multiprocessing room {selected_room.room_id}"
+                )
+                
+                # Send join success response
+                response = {
+                    "type": "join_success",
+                    "expected_version": EXPECTED_CLIENT_VERSION
+                }
+                self.server_socket.sendto((json.dumps(response) + "\n").encode(), addr)
+                return
+            
+            # If selected_room is None, it will be created by get_available_room fallback
+            # and will be a RoomProcessHandle, so we need to handle it
+            if selected_room is None:
+                # This shouldn't happen since get_available_room creates a room
+                # but just in case, we handle it here
+                pass
+        
+        # Standard threading mode
         selected_room.clients[addr] = nickname
         selected_room.client_game_modes[addr] = game_mode
 
@@ -876,6 +978,9 @@ class Server:
     def send_cooldown_notification(self, nickname, cooldown, death_reason):
         """Send a cooldown notification to a specific client"""
         for room in self.rooms.values():
+            # Skip RoomProcessHandle objects (multiprocessing mode)
+            if not hasattr(room, 'clients'):
+                continue
             for addr, name in room.clients.items():
                 if name == nickname:
                     try:
@@ -918,6 +1023,9 @@ class Server:
             # PART 2: Send pings to clients in rooms
             clients_to_ping = set()
             for room in self.rooms.values():
+                # Skip RoomProcessHandle objects (multiprocessing mode)
+                if not hasattr(room, 'clients'):
+                    continue
                 for addr in room.clients.keys():
                     clients_to_ping.add(addr)
 
@@ -984,6 +1092,22 @@ class Server:
 
             # Find the room this client is in and create an AI to control their train
             for room in self.rooms.values():
+                # Handle multiprocessing mode
+                if self.use_multiprocessing and self.room_process_manager:
+                    from server.room_process import RoomProcessHandle
+                    if isinstance(room, RoomProcessHandle):
+                        if addr in room.clients:
+                            self.logger.info(f"Removing {nickname} from multiprocessing room {room.room_id}")
+                            self.room_process_manager.remove_client_from_room(room.room_id, addr)
+                            # Clean up sciper mapping
+                            if sciper in self.sciper_to_room_id:
+                                del self.sciper_to_room_id[sciper]
+                            break
+                        continue
+                
+                # Skip RoomProcessHandle objects (threading mode)
+                if not hasattr(room, 'clients'):
+                    continue
                 if addr in room.clients:
                     # Store the name before removing the client
                     original_nickname = room.clients[addr]
@@ -1260,18 +1384,28 @@ class Server:
                 self.logger.debug(f"Removing room {room_id}")
                 room = self.rooms[room_id]
 
+                # Handle RoomProcessHandle (multiprocessing mode)
+                if self.use_multiprocessing and self.room_process_manager:
+                    from server.room_process import RoomProcessHandle
+                    if isinstance(room, RoomProcessHandle):
+                        self.room_process_manager.remove_room(room_id)
+                        if room_id in self.rooms:
+                            del self.rooms[room_id]
+                        self.logger.debug(f"Multiprocessing room {room_id} removed")
+                        return
+
                 # 1. Signal the game to stop (if it exists and is running)
                 if hasattr(room, 'game') and room.game and room.game.running:
                     self.logger.debug(f"Signaling game in room {room_id} to stop.")
                     room.game.running = False
 
                 # 2. Signal the room's threads to stop
-                if room.running:
+                if hasattr(room, 'running') and room.running:
                     self.logger.debug(f"Signaling room {room_id} threads to stop.")
                     room.running = False
 
                 # 3. Wait for the game thread to finish if it's running
-                if room.game_thread and room.game_thread.is_alive():
+                if hasattr(room, 'game_thread') and room.game_thread and room.game_thread.is_alive():
                     self.logger.info(
                         f"Waiting for game thread in room {room_id} to terminate before removal"
                     )
@@ -1282,20 +1416,18 @@ class Server:
                         )
 
                 # 4. Stop and clean up AI clients associated with this room
-                ai_to_remove = []
-                # Use list() to avoid modification during iteration if necessary, although it might not be strictly needed here
-                for ai_name, ai_client in list(self.rooms[room_id].ai_clients.items()):
-                    # Check if ai_client.room exists before accessing id
-                    if ai_client.room and ai_client.room.id == room_id:
-                        ai_client.stop()
-                        ai_to_remove.append(ai_name)
+                if hasattr(room, 'ai_clients'):
+                    ai_to_remove = []
+                    for ai_name, ai_client in list(room.ai_clients.items()):
+                        if ai_client.room and ai_client.room.id == room_id:
+                            ai_client.stop()
+                            ai_to_remove.append(ai_name)
 
-                for ai_name in ai_to_remove:
-                    if ai_name in self.rooms[room_id].ai_clients:
-                        del self.rooms[room_id].ai_clients[ai_name]
-                    if ai_name in self.rooms[room_id].used_ai_names:
-                        # Use discard to avoid KeyError if name somehow already removed
-                        self.rooms[room_id].used_ai_names.discard(ai_name)
+                    for ai_name in ai_to_remove:
+                        if ai_name in room.ai_clients:
+                            del room.ai_clients[ai_name]
+                        if hasattr(room, 'used_ai_names') and ai_name in room.used_ai_names:
+                            room.used_ai_names.discard(ai_name)
 
                 # 5. Now remove the room itself
                 del self.rooms[room_id]
@@ -1333,6 +1465,11 @@ class Server:
 
         # --- Shutdown sequence starts here, after the loop ---
         self.logger.info("Shutting down server...")
+
+        # 0. Shutdown room processes if in multiprocessing mode
+        if self.use_multiprocessing and self.room_process_manager:
+            self.logger.info("Shutting down room processes...")
+            self.room_process_manager.shutdown()
 
         # 1. Disconnect clients (must happen before closing the socket)
         client_addresses = list(self.addr_to_name.keys())  # Copy keys

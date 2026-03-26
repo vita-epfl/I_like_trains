@@ -26,6 +26,18 @@ class Renderer:
         """Initialize renderer with a reference to the client"""
         self.client: Client = client
         self.sorted_trains: list[tuple[str, int, int]] = []
+        self.leaderboard_dirty: bool = True
+        self.last_scores_hash: int = 0
+        self.leaderboard_update_counter: int = 0
+        self.max_leaderboard_entries: int = 15
+        
+        # Text rendering cache to avoid expensive font.render() calls
+        self.text_cache: dict[tuple, pygame.Surface] = {}
+        self.font_cache: dict[tuple, pygame.font.Font] = {}
+        
+        # Frame time tracking for FPS display (when profiling is disabled)
+        self._last_frame_times: list[float] = []
+        self._last_frame_time: float = time.time()
 
     def draw_game(self) -> None:
         """Draws the game."""
@@ -34,6 +46,16 @@ class Renderer:
             logger.error("Cannot draw game: pygame not initialized or screen is None")
             return
 
+        self.client.profiler.start_timer("render_total")
+        
+        # Track frame time for FPS display
+        current_time = time.time()
+        frame_time_ms = (current_time - self._last_frame_time) * 1000
+        self._last_frame_time = current_time
+        self._last_frame_times.append(frame_time_ms)
+        if len(self._last_frame_times) > 30:
+            self._last_frame_times.pop(0)
+        
         # Fill screen with background color (white)
         self.client.screen.fill((255, 255, 255))
 
@@ -104,19 +126,35 @@ class Renderer:
             outline_width,
         )
 
+        self.client.profiler.start_timer("render_delivery_zone")
         self.draw_delivery_zone()
+        self.client.profiler.end_timer("render_delivery_zone")
 
+        self.client.profiler.start_timer("render_passengers")
         self.draw_passengers()
+        self.client.profiler.end_timer("render_passengers")
 
+        self.client.profiler.start_timer("render_trains")
         self.draw_trains()
+        self.client.profiler.end_timer("render_trains")
 
+        self.client.profiler.start_timer("render_leaderboard")
+        self.leaderboard_update_counter += 1
         self.draw_leaderboard()
+        self.client.profiler.end_timer("render_leaderboard")
+
+        # Draw FPS/Ping overlay in top-left corner of game area
+        self.draw_fps_overlay()
 
         if self.client.is_dead and not self.client.in_waiting_room:
             self.draw_death_screen()
 
         # Update display
+        self.client.profiler.start_timer("display_flip")
         pygame.display.flip()
+        self.client.profiler.end_timer("display_flip")
+        
+        self.client.profiler.end_timer("render_total")
 
     def draw_delivery_zone(self) -> None:
         # Draw delivery zone
@@ -139,6 +177,7 @@ class Renderer:
         """
         Draw passengers and their values
         """
+        # logger.debug(f"Rendering {len(self.client.passengers)} passengers")  # Disabled for performance
         for passenger in self.client.passengers:
             if isinstance(passenger, dict):
                 if "position" in passenger:
@@ -172,9 +211,8 @@ class Renderer:
                 self.client.cell_size // 2 - 2,  # Circle radius slightly smaller
             )
 
-            # Draw the value text above the passenger
-            font = pygame.font.Font(None, 24)  # Default pygame font, size 24
-            text = font.render(str(value), True, (0, 0, 0))  # Black text
+            # Draw the value text above the passenger (using cached text for performance)
+            text = self.get_cached_text(str(value), 24, (0, 0, 0))
             text_rect = text.get_rect(
                 center=(x + self.client.cell_size // 2, y - 5)
             )  # Position above passenger
@@ -388,6 +426,24 @@ class Renderer:
             )
             self.client.screen.blit(text, text_rect)
 
+    def get_cached_text(self, text: str, font_size: int, color: tuple, bold: bool = False) -> pygame.Surface:
+        """Get cached rendered text surface to avoid expensive font.render() calls"""
+        # Convert color to tuple if it's a list (for hashability)
+        if isinstance(color, list):
+            color = tuple(color)
+        
+        cache_key = (text, font_size, color, bold)
+        
+        if cache_key not in self.text_cache:
+            font_key = (font_size, bold)
+            if font_key not in self.font_cache:
+                self.font_cache[font_key] = pygame.font.Font(None, font_size)
+            
+            font = self.font_cache[font_key]
+            self.text_cache[cache_key] = font.render(text, True, color)
+        
+        return self.text_cache[cache_key]
+
     def draw_leaderboard(self) -> None:
         """Draw the leaderboard with train scores"""
         # Define leaderboard area
@@ -422,8 +478,7 @@ class Renderer:
         )
         pygame.draw.rect(self.client.screen, (50, 50, 150), title_rect)
 
-        font_title = pygame.font.Font(None, 28)
-        title = font_title.render("LEADERBOARD", True, (255, 255, 255))
+        title = self.get_cached_text("LEADERBOARD", 28, (255, 255, 255))
         title_rect = title.get_rect(
             center=(
                 self.client.game_width
@@ -435,11 +490,10 @@ class Renderer:
         self.client.screen.blit(title, title_rect)
 
         # Add a header
-        header_font = pygame.font.Font(None, 24)
         header_y = 50
 
-        # Draw columns with distinct titles
-        rank_header = header_font.render("Rank", True, (0, 0, 100))
+        # Draw columns with distinct titles (using cached text)
+        rank_header = self.get_cached_text("Rank", 24, (0, 0, 100))
         self.client.screen.blit(
             rank_header,
             (
@@ -448,7 +502,7 @@ class Renderer:
             ),
         )
 
-        player_header = header_font.render("Player", True, (0, 0, 100))
+        player_header = self.get_cached_text("Player", 24, (0, 0, 100))
         self.client.screen.blit(
             player_header,
             (
@@ -457,7 +511,7 @@ class Renderer:
             ),
         )
 
-        score_header = header_font.render("Score", True, (0, 0, 100))
+        score_header = self.get_cached_text("Score", 24, (0, 0, 100))
         self.client.screen.blit(
             score_header,
             (
@@ -466,7 +520,7 @@ class Renderer:
             ),
         )
 
-        best_score_header = header_font.render("Best", True, (0, 0, 100))
+        best_score_header = self.get_cached_text("Best", 24, (0, 0, 100))
         self.client.screen.blit(
             best_score_header,
             (
@@ -493,29 +547,38 @@ class Renderer:
             2,
         )
 
-        if len(self.sorted_trains) != len(self.client.trains):
-            self.sorted_trains = []
+        # Only update sorted trains if scores have changed, train count changed, or every 10 frames
+        # This reduces expensive sorting operations from 60/sec to 6/sec
+        current_scores_hash = hash(tuple(sorted(self.client.best_scores.items())))
+        should_update = (
+            self.leaderboard_dirty or 
+            current_scores_hash != self.last_scores_hash or 
+            len(self.sorted_trains) != len(self.client.trains) or
+            self.leaderboard_update_counter % 10 == 0
+        )
+        
+        if should_update:
+            
+            # Get train data for leaderboard
+            self.sorted_trains = [(
+                    nickname,
+                    self.client.best_scores.get(nickname, 0),
+                    train_data.get("score", 0),
+                ) for nickname, train_data in self.client.trains.items()]
 
-        # Get train data for leaderboard
-        self.sorted_trains = [(
-                nickname,
-                self.client.best_scores.get(nickname, 0),
-                train_data.get("score", 0),
-            ) for nickname, train_data in self.client.trains.items()]
-
-        # Sort by best score in descending order
-        self.sorted_trains.sort(key=lambda x: x[1], reverse=True)
+            # Sort by best score in descending order
+            self.sorted_trains.sort(key=lambda x: x[1], reverse=True)
+            
+            self.last_scores_hash = current_scores_hash
+            self.leaderboard_dirty = False
 
         # Display players in leaderboard
-        player_font = pygame.font.Font(None, 22)
         y_offset = header_y + 30
 
-        for i, (nickname, best_score, current_score) in enumerate(
-            self.sorted_trains
-        ):
-            # Limit to 10 players in leaderboard
-            # if i >= 10:
-            #     break
+        # Limit to top N entries for performance
+        visible_entries = self.sorted_trains[:self.max_leaderboard_entries]
+        
+        for i, (nickname, best_score, current_score) in enumerate(visible_entries):
 
             # Determine color based on rank
             if i == 0:
@@ -553,8 +616,8 @@ class Renderer:
                     if nickname == self.client.nickname:
                         train_color = (0, 0, 255)  # Blue for player's train
 
-            # Display rank
-            rank_text = player_font.render(str(i + 1), True, rank_color)
+            # Display rank (cached)
+            rank_text = self.get_cached_text(str(i + 1), 22, rank_color)
             self.client.screen.blit(
                 rank_text,
                 (
@@ -565,8 +628,8 @@ class Renderer:
                 ),
             )
 
-            # Display player name with train color
-            name_text = player_font.render(nickname[:15], True, train_color)
+            # Display player name with train color (cached)
+            name_text = self.get_cached_text(nickname[:15], 22, train_color)
             self.client.screen.blit(
                 name_text,
                 (
@@ -577,8 +640,8 @@ class Renderer:
                 ),
             )
 
-            # Display current score
-            score_text = player_font.render(str(current_score), True, (0, 0, 0))
+            # Display current score (cached)
+            score_text = self.get_cached_text(str(current_score), 22, (0, 0, 0))
             self.client.screen.blit(
                 score_text,
                 (
@@ -589,8 +652,8 @@ class Renderer:
                 ),
             )
 
-            # Display best score
-            best_score_text = player_font.render(str(best_score), True, (0, 0, 0))
+            # Display best score (cached)
+            best_score_text = self.get_cached_text(str(best_score), 22, (0, 0, 0))
             self.client.screen.blit(
                 best_score_text,
                 (
@@ -602,6 +665,23 @@ class Renderer:
             )
 
             y_offset += 25
+
+        # Show indicator if there are more players not displayed
+        if len(self.sorted_trains) > self.max_leaderboard_entries:
+            hidden_count = len(self.sorted_trains) - self.max_leaderboard_entries
+            more_text = self.get_cached_text(
+                f"... and {hidden_count} more players",
+                22,
+                (100, 100, 100)
+            )
+            self.client.screen.blit(
+                more_text,
+                (
+                    self.client.game_width + 2 * self.client.game_screen_padding + 60,
+                    y_offset,
+                ),
+            )
+            y_offset += 30
 
         # Draw remaining time below the leaderboard
         if hasattr(self.client, "remaining_game_time"):
@@ -621,8 +701,7 @@ class Renderer:
             pygame.draw.rect(self.client.screen, (50, 50, 150), time_rect)
 
             # Draw time text
-            time_font = pygame.font.Font(None, 24)
-            time_surface = time_font.render(time_text, True, (255, 255, 255))
+            time_surface = self.get_cached_text(time_text, 24, (255, 255, 255))
             time_text_rect = time_surface.get_rect(
                 center=(
                     self.client.game_width
@@ -632,6 +711,85 @@ class Renderer:
                 )
             )
             self.client.screen.blit(time_surface, time_text_rect)
+            y_offset += 40
+
+
+    def draw_fps_overlay(self) -> None:
+        """Draw discrete FPS and Ping overlay in bottom-right corner of entire screen"""
+        # Get metrics
+        fps = self.client.profiler.get_current_fps() if hasattr(self.client.profiler, 'get_current_fps') else 0
+        # Fallback: calculate FPS from pygame clock if profiler returns 0
+        if fps == 0 and hasattr(self, '_last_frame_times'):
+            if len(self._last_frame_times) > 0:
+                avg_time = sum(self._last_frame_times) / len(self._last_frame_times)
+                fps = 1000.0 / avg_time if avg_time > 0 else 0
+        rtt_ms = self.client.network.last_rtt_ms
+        
+        # Discrete muted gray color for both
+        text_color = (120, 120, 120)
+        
+        # Position in bottom-right corner of entire screen
+        x_pos = self.client.screen_width - 80
+        y_pos = self.client.screen_height - 30
+        
+        # Draw semi-transparent background
+        bg_rect = pygame.Rect(x_pos - 3, y_pos - 2, 78, 30)
+        bg_surface = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+        bg_surface.fill((255, 255, 255, 120))
+        self.client.screen.blit(bg_surface, bg_rect)
+        
+        # Draw FPS
+        fps_text = f"FPS: {fps:.0f}"
+        fps_surface = self.get_cached_text(fps_text, 16, text_color)
+        self.client.screen.blit(fps_surface, (x_pos, y_pos))
+        
+        # Draw Ping below FPS
+        ping_text = f"Ping: {rtt_ms:.0f}ms"
+        ping_surface = self.get_cached_text(ping_text, 16, text_color)
+        self.client.screen.blit(ping_surface, (x_pos, y_pos + 13))
+
+    def draw_network_stats(self, y_offset: int) -> None:
+        """Draw network statistics (ping/RTT and FPS)"""
+        # Get RTT from network manager
+        rtt_ms = self.client.network.last_rtt_ms
+        
+        # Color based on latency (green < 50ms, yellow < 100ms, red >= 100ms)
+        if rtt_ms < 50:
+            ping_color = (0, 200, 0)  # Green
+        elif rtt_ms < 100:
+            ping_color = (255, 200, 0)  # Yellow
+        else:
+            ping_color = (255, 50, 50)  # Red
+        
+        ping_text = f"Ping: {rtt_ms:.0f}ms"
+        ping_surface = self.get_cached_text(ping_text, 20, ping_color)
+        self.client.screen.blit(
+            ping_surface,
+            (
+                self.client.game_width + 2 * self.client.game_screen_padding + 10,
+                y_offset + 15,
+            ),
+        )
+        
+        # Draw FPS
+        fps = self.client.profiler.get_current_fps() if hasattr(self.client.profiler, 'get_current_fps') else 0
+        if fps > 0:
+            if fps >= 55:
+                fps_color = (0, 200, 0)  # Green
+            elif fps >= 30:
+                fps_color = (255, 200, 0)  # Yellow
+            else:
+                fps_color = (255, 50, 50)  # Red
+            
+            fps_text = f"FPS: {fps:.0f}"
+            fps_surface = self.get_cached_text(fps_text, 20, fps_color)
+            self.client.screen.blit(
+                fps_surface,
+                (
+                    self.client.game_width + 2 * self.client.game_screen_padding + 100,
+                    y_offset + 15,
+                ),
+            )
 
     def draw_game_over_screen(self) -> None:
         """Display the game over screen with final scores"""
@@ -644,7 +802,7 @@ class Renderer:
 
         # Draw message
         font_message = pygame.font.Font(None, 36)
-        if self.client.game_over_data:
+        if self.client.game_over_data and isinstance(self.client.game_over_data, dict):
             message = self.client.game_over_data.get(
                 "message", "Time limit reached."
             )
@@ -755,7 +913,7 @@ class Renderer:
 
             # Draw score
             score_text = font_scores.render(str(player_score), True, rank_color)
-            self.client.screen.blit(score_text, (col3_x + 50, y_offset))
+            self.client.screen.blit(score_text, (col3_x + 100, y_offset))
 
             y_offset += 40
 

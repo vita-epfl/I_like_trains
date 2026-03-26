@@ -27,7 +27,7 @@ BOOST_INTENSITY = 3  # Intensity of speed boost
 
 class Train:
     def __init__(self, x, y, nickname, color, handle_train_death, tick_rate, reference_tick_rate):
-        server_logger.debug(f"Creating train {nickname} at position {x}, {y}")
+        # server_logger.debug(f"Creating train {nickname} at position {x}, {y}")
         self.position = (x, y)
         self.wagons = []
         self.new_direction = Move.RIGHT.value
@@ -103,7 +103,7 @@ class Train:
             required_ticks = int((BOOST_COOLDOWN_DURATION + BOOST_DURATION) * self.reference_tick_rate)
             
             if ticks_elapsed >= required_ticks:
-                server_logger.debug(f"Resetting cooldown for train {self.nickname}")
+                # server_logger.debug(f"Resetting cooldown for train {self.nickname}")
                 # Reset cooldown
                 self.boost_cooldown_active = False
                 self._dirty["boost_cooldown_active"] = True
@@ -152,7 +152,7 @@ class Train:
             and not self.speed_boost_active
             and len(self.wagons) > 0
         ):
-            server_logger.debug(f"Applying speed boost to train {self.nickname}")
+            # server_logger.debug(f"Applying speed boost to train {self.nickname}")
             # Get the last wagon position
             last_wagon_pos = self.wagons[-1]
 
@@ -167,7 +167,7 @@ class Train:
             self.speed_boost_timer = BOOST_DURATION  # 1 second boost
 
             # Start cooldown
-            server_logger.debug(f"Starting cooldown for train {self.nickname}")
+            # server_logger.debug(f"Starting cooldown for train {self.nickname}")
             self.boost_cooldown_active = True
             self.start_boost_cooldown_tick = self.current_tick
             self._dirty["boost_cooldown_active"] = True
@@ -303,7 +303,7 @@ class Train:
                 collision_msg = (
                     f"Train {self.nickname} collided with its own wagon at {wagon_pos}"
                 )
-                server_logger.info(collision_msg)
+                # server_logger.info(collision_msg)
                 death_reason = "self_collision"
                 self.handle_death([self.nickname], death_reason)
                 return True
@@ -317,7 +317,7 @@ class Train:
                 collision_msg = (
                     f"Train {self.nickname} collided with train {train.nickname}"
                 )
-                server_logger.info(collision_msg)
+                # server_logger.info(collision_msg)
                 death_reason = "collision_with_train"
                 self.handle_death([self.nickname, train.nickname], death_reason)
                 return True
@@ -326,7 +326,7 @@ class Train:
             for wagon_pos in train.wagons:
                 if self.position == wagon_pos:
                     collision_msg = f"Train {self.nickname} collided with wagon of train {train.nickname}"
-                    server_logger.info(collision_msg)
+                    # server_logger.info(collision_msg)
                     death_reason = "collision_with_wagon"
                     self.handle_death([self.nickname], death_reason)
                     return True

@@ -51,8 +51,28 @@ class GameState:
                     self.client.agent.all_trains = self.client.trains
 
         if "passengers" in data:
-            # Adjust passenger positions to be in pixel coordinates
-            self.client.passengers = data["passengers"]
+            # Update passengers - merge by ID if present, otherwise replace entire list
+            incoming_passengers = data["passengers"]
+            # logger.debug(f"Received {len(incoming_passengers)} passengers from server. Current: {len(self.client.passengers)}")
+            
+            # Check if this is a full replacement (when passengers were removed on server)
+            if data.get("passengers_full_update", False):
+                # logger.debug("Full replacement: replacing entire passenger list (passengers removed)")
+                self.client.passengers = incoming_passengers
+            elif incoming_passengers and len(incoming_passengers) > 0 and "id" in incoming_passengers[0]:
+                # Delta update: merge by ID
+                # logger.debug(f"Delta update: merging {len(incoming_passengers)} passengers by ID")
+                passenger_dict = {p["id"]: p for p in self.client.passengers if "id" in p}
+                for p in incoming_passengers:
+                    if "id" in p:
+                        passenger_dict[p["id"]] = p
+                self.client.passengers = list(passenger_dict.values())
+                # logger.debug(f"After merge: {len(self.client.passengers)} passengers")
+            else:
+                # Full update: replace entire list (for initial state or when no IDs)
+                # logger.debug("Full update: replacing entire passenger list")
+                self.client.passengers = incoming_passengers
+            
             if self.game_mode == GameMode.AGENT and self.client.agent is not None:
                 self.client.agent.passengers = self.client.passengers
 
@@ -242,15 +262,25 @@ class GameState:
 
             # Store the game over data
             self.client.game_over = True
-            self.client.game_over_data = data
-
-            # Extract final scores
-            self.client.final_scores = data.get("final_scores", [])
+            
+            # Handle both old format (dict with final_scores) and new format (list of scores)
+            if isinstance(data, list):
+                # New format: data is directly the scores list
+                self.client.final_scores = data
+                self.client.game_over_data = {"message": "Time limit reached.", "final_scores": data}
+            elif isinstance(data, dict):
+                # Old format: data is a dict with final_scores key
+                self.client.final_scores = data.get("final_scores", [])
+                self.client.game_over_data = data
+            else:
+                self.client.final_scores = []
+                self.client.game_over_data = {}
 
             # Update the leaderboard with final scores
             self.client.leaderboard_data = self.client.final_scores
 
-            logger.info(f"Game over: {data.get('message', 'Time limit reached')}")
+            message = self.client.game_over_data.get("message", "Time limit reached.") if isinstance(self.client.game_over_data, dict) else "Time limit reached."
+            logger.info(f"Game over: {message}")
             logger.info(f"Final scores: {self.client.final_scores}")
 
         except Exception as e:

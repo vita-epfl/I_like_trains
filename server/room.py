@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import random
 import threading
 import time
+import zlib
+
 from tqdm import tqdm
 
 from common.server_config import ServerConfig
 from common import stats_manager
 from common.constants import REFERENCE_TICK_RATE
+from common.performance_profiler import PerformanceProfiler
 from common.messages import (
     GameStartedSuccessMessage,
     StateMessage,
@@ -29,6 +34,33 @@ from server.ai_client import AIClient
 # Configure logger
 logger = logging.getLogger("server.room")
 # Log level will be set by the server.py setup_server_logger function
+
+# Compression threshold in bytes - messages larger than this will be compressed
+COMPRESSION_THRESHOLD = 1024  # 1KB
+
+
+def compress_message(data: str) -> str:
+    """Compress a message if it exceeds the threshold.
+    
+    Args:
+        data: JSON string to potentially compress
+        
+    Returns:
+        Original data or compressed wrapper with _compressed marker
+    """
+    if len(data) <= COMPRESSION_THRESHOLD:
+        return data
+    
+    try:
+        compressed = zlib.compress(data.encode(), level=6)
+        # Only use compression if it actually reduces size by at least 20%
+        if len(compressed) < len(data) * 0.8:
+            compressed_b64 = base64.b64encode(compressed).decode()
+            return json.dumps({"_compressed": True, "data": compressed_b64}) + "\n"
+    except Exception as e:
+        logger.debug(f"Compression failed, sending uncompressed: {e}")
+    
+    return data
 
 # List of names for AI-controlled clients
 AI_NAMES = [
@@ -130,6 +162,13 @@ class Room:
             self.random,
         )
 
+        self.profiler = PerformanceProfiler(
+            enabled=self.config.enable_profiling,
+            output_dir=self.config.profiling_output_dir,
+            interval_seconds=self.config.profiling_interval_seconds,
+            profile_name=f"server_room_{self.id}"
+        )
+
         logger.debug(f"Room {room_id} created with number of clients {nb_players_max}")
 
     def start_game(self):
@@ -175,15 +214,15 @@ class Room:
         nb_bots_needed = self.nb_players_max - current_players
         self.fill_with_bots(nb_bots_needed)
 
-        for ai_name in list(self.game.ai_clients.keys()):
-            if ai_name not in self.game.trains:
-                logger.debug(f"Adding train for AI client {ai_name}")
+        # for ai_name in list(self.game.ai_clients.keys()):
+            # if ai_name not in self.game.trains:
+            #     logger.debug(f"Adding train for AI client {ai_name}")
             
             # Log train status
-            if ai_name in self.game.trains:
-                logger.debug(f"Train {ai_name} initialized at position {self.game.trains[ai_name].position}")
-            else:
-                logger.warning(f"Failed to add train for AI client {ai_name}")
+            # if ai_name in self.game.trains:
+            #     logger.debug(f"Train {ai_name} initialized at position {self.game.trains[ai_name].position}")
+            # else:
+            #     logger.warning(f"Failed to add train for AI client {ai_name}")
         
         # In grading mode, we run the simulation directly in this thread
         # Create and start game thread
@@ -218,10 +257,10 @@ class Room:
         else:
             speed_description = f"{reference_tickrate/self.config.tick_rate:.1f}x slower than normal"
             
-        logger.debug(f"Game running at {speed_description} (tickrate: {self.config.tick_rate}).")
-        logger.debug(f"Acceleration in comparison to reference tickrate: {self.config.tick_rate / reference_tickrate:.2f}")
-        logger.debug(f"Game seconds per tick: {game_seconds_per_tick:.4f}s")
-        logger.debug(f"Real seconds per tick: {real_seconds_per_tick*1000:.2f}ms")
+        logger.info(f"Game running at {speed_description} (tickrate: {self.config.tick_rate}).")
+        logger.info(f"Acceleration in comparison to reference tickrate: {self.config.tick_rate / reference_tickrate:.2f}")
+        logger.info(f"Game seconds per tick: {game_seconds_per_tick:.4f}s")
+        logger.info(f"Real seconds per tick: {real_seconds_per_tick*1000:.2f}ms")
         
         # Initialize game time to zero
         game_time_elapsed = 0.0
@@ -239,6 +278,8 @@ class Room:
         for update_count in iteration_range:
             if not self.running or self.game_over:
                 break
+            
+            self.profiler.start_timer("tick_total")
                 
             # Synchronize update_count and tick_counter
             self.tick_counter = update_count + 1
@@ -249,12 +290,15 @@ class Room:
             game_time_elapsed += game_seconds_per_tick
 
             # Update game state
+            self.profiler.start_timer("game_update")
             self.game.update()
+            self.profiler.end_timer("game_update")
             
             # Calculate remaining game time
             remaining_game_time = self.config.game_duration_seconds - game_time_elapsed
             
             # Prepare the game state to send to clients
+            self.profiler.start_timer("state_preparation")
             state = self.game.get_dirty_state()
             
             # Add remaining time to state data only if it has changed significantly
@@ -264,14 +308,20 @@ class Room:
 
             # Create the data packet
             state_message = StateMessage(data=state)
+            self.profiler.end_timer("state_preparation")
 
             if state:  # If data has been modified
                 # Update all AI clients
+                self.profiler.start_timer("ai_update")
                 for ai_client in self.ai_clients.values():
                     ai_client.update_state(state_message.model_dump())
+                self.profiler.end_timer("ai_update")
                 
-                # Send the state to all clients
+                # Send the state to all clients (with optional compression)
+                self.profiler.start_timer("network_send")
                 state_json = state_message.to_json()
+                compressed_json = compress_message(state_json)
+                bytes_sent = 0
                 for client_addr in list(self.clients.keys()):
                     try:
                         # Skip AI clients - they don't need network messages
@@ -283,10 +333,21 @@ class Room:
                             continue
 
                         self.server_socket.sendto(
-                            state_json.encode(), client_addr
+                            compressed_json.encode(), client_addr
                         )
+                        bytes_sent += len(compressed_json)
                     except Exception as e:
                         logger.error(f"Error sending state to client: {e}")
+                self.profiler.end_timer("network_send")
+                self.profiler.record_network_event("state_broadcast", bytes_sent)
+            
+            self.profiler.end_timer("tick_total")
+            
+            # Record metrics every 60 ticks
+            if update_count % 60 == 0:
+                self.profiler.record_metric("game", "trains_count", len(self.game.trains))
+                self.profiler.record_metric("game", "passengers_count", len(self.game.passengers))
+                self.profiler.record_metric("game", "clients_count", len(self.clients))
             
             # Sleep if necessary to maintain the desired tick rate in real time
             # Skip sleep in grading mode to run as fast as possible
@@ -316,6 +377,9 @@ class Room:
         logger.info(f"Final scores: {self.game.best_scores}")
 
         logger.info(f"Game in room {self.id} ending after {self.tick_counter} ticks, game time: {game_time_elapsed:.2f}s, real time: {total_real_time:.2f}s")
+        logger.info(f"Stopping profiler (enabled={self.profiler.enabled})...")
+        self.profiler.stop()
+        logger.info("Profiler stopped")
         self.end_game()
 
     def end_game(self):
@@ -334,7 +398,7 @@ class Room:
         participant_scores = []  # List of tuples: (id, score, is_human)
         participant_id = None  # Initialize participant_id to avoid UnboundLocalError
         for nickname, best_score in self.game.best_scores.items():
-            logger.debug(f"Train {nickname} has best score {best_score}")
+            # logger.debug(f"Train {nickname} has best score {best_score}")
 
             # Find the client address associated with this train name
             client_addr = None
@@ -784,8 +848,9 @@ class Room:
                         # Create the data packet
                         state_message = StateMessage(data=state)
 
-                        # Send the state to all clients
+                        # Send the state to all clients (with optional compression)
                         state_json = state_message.to_json()
+                        compressed_json = compress_message(state_json)
                         for client_addr in list(self.clients.keys()):
                             try:
                                 # Skip AI clients - they don't need network messages
@@ -797,7 +862,7 @@ class Room:
                                     continue
 
                                 self.server_socket.sendto(
-                                    state_json.encode(), client_addr
+                                    compressed_json.encode(), client_addr
                                 )
                             except Exception as e:
                                 logger.error(f"Error sending state to client: {e}")
@@ -871,14 +936,14 @@ class Room:
         """Create an AI client to control a train"""
 
         # Creating a new AI train (not replacing an existing one)
-        logger.debug(f"Creating new AI train with name {ai_nickname}")
+        # logger.debug(f"Creating new AI train with name {ai_nickname}")
 
         # Add the train to the game
         if self.game.add_train(ai_nickname):
             # Import the AI agent from the config path
-            logger.debug(
-                f"Creating AI client {ai_nickname} using agent from {ai_agent_file_name}"
-            )
+            # logger.debug(
+            #     f"Creating AI client {ai_nickname} using agent from {ai_agent_file_name}"
+            # )
 
             self.ai_clients[ai_nickname] = AIClient(
                 self, ai_nickname, ai_agent_file_name=ai_agent_file_name, agent_dir=agent_dir
@@ -887,7 +952,7 @@ class Room:
             # Add the ai_client to the game
             self.game.ai_clients[ai_nickname] = self.ai_clients[ai_nickname]
 
-            logger.debug(f"Added new AI train {ai_nickname} to room {self.id}")
+            # logger.debug(f"Added new AI train {ai_nickname} to room {self.id}")
             return ai_nickname
         else:
             logger.error(f"Failed to add new AI train {ai_nickname} to game")
@@ -899,7 +964,7 @@ class Room:
             logger.warning(f"AI already exists for train {train_nickname_to_replace}")
             return
 
-        logger.debug(f"Creating AI client for train {train_nickname_to_replace}")
+        # logger.debug(f"Creating AI client for train {train_nickname_to_replace}")
 
         # Change the train's name in the game
         if train_nickname_to_replace in self.game.trains:

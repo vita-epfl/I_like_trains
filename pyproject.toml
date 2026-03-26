@@ -13,6 +13,9 @@ dependencies = [
     "typing-inspection==0.4.2",
     "typing-extensions==4.15.0",
     "pytz==2025.2",
+    "tqdm>=4.67.1",
+    "pandas>=3.0.0",
+    "psutil>=6.1.0",
 ]
 
 [build-system]

@@ -51,3 +51,8 @@ class ClientConfig(BaseModel):
     # If True, the client will generate a random suffix for the nickname, allows you
     # to have multiple clients with the same nickname in the config
     add_suffix_to_nickname: bool = False
+
+    # Performance profiling settings
+    enable_profiling: bool = False
+    profiling_output_dir: str = "profiling_results"
+    profiling_interval_seconds: float = 1.0
