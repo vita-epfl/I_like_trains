@@ -79,27 +79,28 @@ class NetworkManager:
 
     def disconnect(self, stop_client: bool = False) -> None:
         """Close connection with server"""
+        logger.info("Disconnecting from server")
         self.running = False
         if stop_client:
             self.client.running = False
-
             logger.warning("Server disconnection detected. Stopping client.")
 
-        if self.socket and self.socket is not None:
-            if hasattr(self, "server_addr"):
-                try:
-                    local_addr = self.socket.getsockname()
-                    dummy_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    dummy_socket.sendto(b"", local_addr)
-                    dummy_socket.close()
-                except Exception as e:
-                    if "10049" in str(e):
-                        pass
-                    else:
-                        logger.debug(f"Error sending dummy packet: {e}")
+        if self.socket:
+            try:
+                local_addr = self.socket.getsockname()
+                dummy_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                dummy_socket.sendto(b"", local_addr)
+                dummy_socket.close()
+            except Exception as e:
+                if "10049" not in str(e):
+                    logger.debug(f"Error sending dummy packet: {e}")
 
-            self.socket.close()
-            self.socket = None  # Set to None after closing
+            try:
+                self.socket.close()
+            except Exception as e:
+                logger.debug(f"Error closing socket: {e}")
+            
+            self.socket = None
             logger.info("UDP socket closed")
 
     def send_message(self, message: dict[str, Any]) -> bool:
@@ -282,7 +283,9 @@ class NetworkManager:
 
                         elif message_type == "game_over":
                             logger.info("Game is over. Received final scores.")
-                            self.client.handle_game_over(message_data["data"])
+                            # Handle both old format (data) and new format (scores)
+                            game_over_data = message_data.get("data") or message_data.get("scores")
+                            self.client.handle_game_over(game_over_data)
 
                             # Disconnect from server after a short delay
                             def disconnect_after_delay():
