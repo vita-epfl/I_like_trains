@@ -675,8 +675,10 @@ class RoomProcessRunner:
                 state_data = {"type": "state", "data": state}
                 
                 # Update AI clients
+                self.profiler.start_timer("ai_update")
                 for ai_client in self.ai_clients.values():
                     ai_client.update_state(state_data)
+                self.profiler.end_timer("ai_update")
                 
                 # Send to human clients
                 state_json = json.dumps(state_data) + "\n"
