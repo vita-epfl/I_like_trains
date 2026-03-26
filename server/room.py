@@ -377,7 +377,9 @@ class Room:
         logger.info(f"Final scores: {self.game.best_scores}")
 
         logger.info(f"Game in room {self.id} ending after {self.tick_counter} ticks, game time: {game_time_elapsed:.2f}s, real time: {total_real_time:.2f}s")
+        logger.info(f"Stopping profiler (enabled={self.profiler.enabled})...")
         self.profiler.stop()
+        logger.info("Profiler stopped")
         self.end_game()
 
     def end_game(self):

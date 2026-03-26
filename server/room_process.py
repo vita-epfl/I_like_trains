@@ -330,6 +330,15 @@ class RoomProcessRunner:
         self.used_ai_names = set()
         self.used_nicknames = set()
         
+        # Initialize profiler
+        from common.performance_profiler import PerformanceProfiler
+        self.profiler = PerformanceProfiler(
+            enabled=config.enable_profiling,
+            output_dir=config.profiling_output_dir,
+            interval_seconds=config.profiling_interval_seconds,
+            profile_name=f"server_room_{room_id}"
+        )
+        
         self.logger.info(f"RoomProcessRunner initialized for room {room_id}")
     
     def _send_to_client(self, addr: tuple, data: str, compress: bool = True):
@@ -666,8 +675,10 @@ class RoomProcessRunner:
                 state_data = {"type": "state", "data": state}
                 
                 # Update AI clients
+                self.profiler.start_timer("ai_update")
                 for ai_client in self.ai_clients.values():
                     ai_client.update_state(state_data)
+                self.profiler.end_timer("ai_update")
                 
                 # Send to human clients
                 state_json = json.dumps(state_data) + "\n"
@@ -680,12 +691,33 @@ class RoomProcessRunner:
                 elapsed = time.time() - game_start_time
                 target_time = (update_count + 1) * real_seconds_per_tick
                 sleep_time = max(0, target_time - elapsed)
+                
+                # Log if we're falling behind (negative sleep time means we're late)
+                if sleep_time == 0 and elapsed > target_time:
+                    behind_ms = (elapsed - target_time) * 1000
+                    if behind_ms > 5:  # Only log if more than 5ms behind
+                        self.logger.debug(f"Tick {update_count + 1}: Behind by {behind_ms:.1f}ms")
+                    
+                    # If we fall too far behind, reset timing to prevent rapid catch-up
+                    # which causes trains to appear to accelerate
+                    MAX_CATCHUP_MS = 20  # Max allowed catch-up before resetting (~1 tick)
+                    if behind_ms > MAX_CATCHUP_MS:
+                        # Reset game_start_time to current time minus expected elapsed
+                        # This effectively "skips" the lag and resumes normal timing
+                        game_start_time = time.time() - target_time
+                        self.logger.debug(f"Tick {update_count + 1}: Reset timing (was {behind_ms:.1f}ms behind)")
+                
                 if sleep_time > 0:
                     time.sleep(sleep_time)
         
         # Game finished
         total_real_time = time.time() - game_start_time
         self.logger.info(f"Game completed: {update_count + 1} ticks in {total_real_time:.2f}s")
+        
+        # Stop profiler and save results
+        self.logger.info(f"Stopping profiler (enabled={self.profiler.enabled})...")
+        self.profiler.stop()
+        self.logger.info("Profiler stopped")
         
         self._end_game()
     

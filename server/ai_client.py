@@ -182,9 +182,67 @@ class AIClient:
         # Update agent state only if train is alive and game contains train
         if not self.is_dead and self.game.contains_train(self.nickname):
             try:
-                self.agent.update_agent()
+                # Call get_move() directly without thread overhead (server AI is trusted)
+                self._fast_update_agent()
             except Exception as e:
                 logger.error(f"Error during agent update for {self.nickname}: {e}")
+
+    def _fast_update_agent(self):
+        """Optimized agent update with timeout protection for student code.
+        
+        Uses signal.alarm for timeout (more efficient than thread creation).
+        Falls back to direct call if signal is not available (Windows).
+        """
+        import signal
+        from common import move
+        
+        class TimeoutError(Exception):
+            pass
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError()
+        
+        new_direction = None
+        timeout_seconds = 1  # Same as BaseAgent timeout
+        
+        try:
+            # Set up signal-based timeout (Unix only, but more efficient)
+            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout_seconds)
+            
+            try:
+                new_direction = self.agent.get_move()
+            finally:
+                signal.alarm(0)  # Cancel the alarm
+                signal.signal(signal.SIGALRM, old_handler)  # Restore handler
+                
+        except TimeoutError:
+            logger.error(f"Agent {self.nickname} too slow. Execution exceeded timeout limit of {timeout_seconds}s")
+            return
+        except AttributeError:
+            # signal.SIGALRM not available (Windows) - call directly without timeout
+            try:
+                new_direction = self.agent.get_move()
+            except Exception as e:
+                logger.error(f"Error in get_move() for {self.nickname}: {e}")
+                return
+        except Exception as e:
+            logger.error(f"Error in get_move() for {self.nickname}: {e}")
+            return
+        
+        if new_direction is None:
+            return
+        
+        # Check if it's a valid Move enum
+        if not isinstance(new_direction, move.Move):
+            return
+        
+        if new_direction == move.Move.DROP:
+            self.network.send_drop_wagon_request()
+            return
+        
+        if new_direction != self.agent.all_trains[self.nickname]["direction"]:
+            self.network.send_direction_change(new_direction.value)
 
     def stop(self):
         """Stop the AI client"""
