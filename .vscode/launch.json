@@ -5,22 +5,28 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Single Process",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "single_process"
-        },
-        {
-            "name": "Debug server",
+            "name": "Server Debug",
             "type": "debugpy",
             "request": "launch",
             "module": "server"
         },
         {
-            "name": "Debug client",
+            "name": "Client Debug",
             "type": "debugpy",
             "request": "launch",
             "module": "client"
-        }
+        },
+        {
+            "name": "Unittests Debug",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "unittest",
+            "args": [
+                "-v"
+                // uncomment to run a specific unittest
+                // "server.test_game.TestGame"
+                // "common.test_state.TestStateSerialization
+            ]
+        },
     ]
 }

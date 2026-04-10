@@ -1,0 +1,23 @@
+{
+    "client": {
+        "teamname": "incognito",
+        "connect_to": "127.0.0.1",
+        "agent_filename": "keyboard.py",
+        "total_players": 1,
+        "min_staff_agents": 0
+    },
+    "server": {
+        "localhost_only": true,
+        "agents": {
+            "idle": "agent.py"
+        },
+        "maps": {
+            "civil": "maps/map_civil.txt",
+            "epfl": "maps/map_epfl.txt",
+            "irregular": "maps/map_irregular.txt",
+            "corridors": "maps/map_corridors.txt",
+            "heart": "maps/map_heart.txt",
+            "regular": "maps/map_regular.txt"
+        }
+    }
+}
