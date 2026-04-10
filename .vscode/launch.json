@@ -5,19 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug Single Process",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "single_process"
-        },
-        {
-            "name": "Debug server",
+            "name": "Server",
             "type": "debugpy",
             "request": "launch",
             "module": "server"
         },
         {
-            "name": "Debug client",
+            "name": "Client",
             "type": "debugpy",
             "request": "launch",
             "module": "client"

@@ -1,501 +1,339 @@
-import random
-import threading
 import logging
+import random
 
-from common.server_config import ServerConfig
-from common.constants import REFERENCE_TICK_RATE
+from common.messages import Dir, Move
+from common.state import Bus, GameState, Passenger, PassengerId, Pos, RoomState, Slot
 
-from server.train import Train
-from server.passenger import Passenger
-from server.delivery_zone import DeliveryZone
-
-
-# Use the logger configured in server.py
 logger = logging.getLogger("server.game")
-
-ORIGINAL_GAME_WIDTH = 400
-ORIGINAL_GAME_HEIGHT = 400
-
-ORIGINAL_GRID_NB = 20
-
-TRAINS_PASSENGER_RATIO = 1  # Number of trains per passenger
-
-GAME_SIZE_INCREMENT_RATIO = (
-    0.05  # Increment per train, the bigger the number, the bigger the screen grows
-)
-CELL_SIZE = int(ORIGINAL_GAME_WIDTH / ORIGINAL_GRID_NB)
-GAME_SIZE_INCREMENT = int(
-    ((ORIGINAL_GAME_WIDTH + ORIGINAL_GAME_HEIGHT) / 2) * GAME_SIZE_INCREMENT_RATIO
-)  # Increment per train
-
-SPAWN_SAFE_ZONE = 3
-SAFE_PADDING = 3
-
-
-def generate_random_non_blue_color(random_gen=None):
-    """Generate a random RGB color avoiding blue nuances"""
-    random_instance = random_gen if random_gen is not None else random
-    while True:
-        r = random_instance.randint(100, 230)  # Lighter for the trains
-        g = random_instance.randint(100, 230)
-        b = random_instance.randint(0, 150)  # Limit the blue
-
-        # If it's not a blue nuance (more red or green than blue)
-        if r > b + 50 or g > b + 50:
-            return (r, g, b)
 
 
 class Game:
-    # TODO(alok): remove nb_players and use config.clients_per_room
-    def __init__(self, config: ServerConfig, send_cooldown_notification, nb_players, room_id, seed=None, random_gen=None):
-        self.config = config
-        self.send_cooldown_notification = send_cooldown_notification
+    """
+    A game represents the game at the logical level. The following code lives here:
+    - code to move a bus
+    - code to check if a bus collided
+    - code to check if a bus is allowed to pickup a given passenger
+    - code to drop off a passenger and increment the player's score if needed
+    - code to spawn a bus
+    - code to spawn a passenger
+
+    The code keeps its state in GameState, which gets sent to the client. Some additional
+    state, such as self.buses and self.passengers is stored here to improve efficiency.
+    """
+
+    def __init__(self, rng: random.Random, room_state: RoomState, room_id: int):
+        self.random = rng
+        self.room_state = room_state
         self.room_id = room_id
-        self.seed = seed
-        self.random = random_gen if random_gen is not None else random.Random(seed)
+        self.game_state = GameState()
 
-        # Calculate initial game size based on number of clients
-        self.game_width = ORIGINAL_GAME_WIDTH + (nb_players * GAME_SIZE_INCREMENT)
-        self.game_height = ORIGINAL_GAME_HEIGHT + (
-            nb_players * GAME_SIZE_INCREMENT
-        )
+        self.buses: dict[Pos, Bus] = {}  # for quick lookup
+        self.passengers: dict[PassengerId, Pos] = {}  # for quick lookup
 
-        self.delivery_zone = DeliveryZone(
-            self.game_width, self.game_height, CELL_SIZE, nb_players, self.random
-        )
-        self.cell_size = CELL_SIZE
+        self.available_cells = list(room_state.map.available_cells)
+        self.next_passenger_id: PassengerId = 1
+        self.destinations = set(room_state.map.delivery_zones.values())
+        for player in self.room_state.players:
+            self.spawn_bus(player.slot)
+        for _ in range(self.room_state.desired_passengers):
+            self.spawn_passenger()
+        self.game_state.scores = {}
 
-        self.trains = {}
-        self.ai_clients = {}
-        self.best_scores = {}
-        self.train_colors = {}  # {nickname: (train_color, wagon_color)}
-        self.passengers = []
-        self.dead_trains = {}  # {nickname: death_time}
-        self.train_death_ticks = {}  # {nickname: death_tick} - For tick-based cooldown
-        self.current_tick = 0  # Current tick counter
-        self.start_time_ticks = 0  # Start time in ticks
-        self.start_time = None  # Track when the game starts
-        self.last_remaining_time = None  # Track the last remaining time sent to clients
+    @staticmethod
+    def neighboring_cells(pos: Pos, n: int) -> set[Pos]:
+        r: set[Pos] = set()
+        x, y = pos
+        for i in range(-n, n + 1):
+            for j in range(-n, n + 1):
+                r.add((x + i, y + j))
+        return r
 
-        self.desired_passengers = 0
-        self._passengers_need_full_update = False  # Track if we need to send full passenger list
+    def update_passengers(self, passenger: Passenger, pos: Pos) -> None:
+        self.game_state.passengers[pos] = passenger
+        self.passengers[passenger.id] = pos
 
-        self.lock = threading.Lock()
+    def remove_passengers(self, passenger: Passenger, pos: Pos) -> None:
+        del self.game_state.passengers[pos]
+        del self.passengers[passenger.id]
 
-        self.game_started = False  # Track if game has started
-        self.last_delivery_tick = {}  # {nickname: last_delivery_tick}
-        self.running = True
+    def spawn_passenger(self) -> None:
+        """
+        Spawns a passenger. Looks for a position which isn't
+        occupied by any existing passengers. Tries to pick
+        cells away from existing buses.
+        """
+        available_cells = self.room_state.map.available_cells.copy()
+        for pos in self.game_state.passengers:
+            # Remove cells which have passengers
+            available_cells.remove(pos)
 
-        # self.high_score_all_time = HighScore()
-        # self.high_score_all_time.load() 
-        # self.high_score_all_time.dump()
-
-        # Dirty flags for the game
-        self._dirty = {
-            "trains": True,
-            "size": True,
-            "cell_size": True,
-            "passengers": True,
-            "delivery_zone": True,
-            "best_scores": True,
-        }
-        logger.info(f"Game initialized with tick rate: {self.config.tick_rate}")
-
-    def get_dirty_state(self):
-        """Return game state with only modified data"""
-        state = {}
-
-        # Add game dimensions if modified
-        if self._dirty["size"]:
-            state["size"] = {
-                "game_width": self.game_width,
-                "game_height": self.game_height,
-            }
-            self._dirty["size"] = False
-
-        # Add grid size if modified
-        if self._dirty["cell_size"]:
-            state["cell_size"] = self.cell_size
-            self._dirty["cell_size"] = False
-
-        # Add passengers if modified - only send dirty passengers for efficiency
-        if self._dirty["passengers"]:
-            # If passengers were removed, send full list with special flag to force client replacement
-            if self._passengers_need_full_update:
-                state["passengers"] = [p.to_dict(include_id=True) for p in self.passengers]
-                state["passengers_full_update"] = True  # Signal client to replace entire list
-                # logger.debug(f"Sending all {len(self.passengers)} passengers to clients (full replacement - passengers removed)")
-                self._passengers_need_full_update = False
-            else:
-                # Otherwise, send only dirty passengers with IDs for delta update
-                dirty_passengers = []
-                for p in self.passengers:
-                    p_data = p.to_dict_if_dirty(include_id=True)
-                    if p_data:
-                        dirty_passengers.append(p_data)
-                
-                # If we have dirty passengers, send them; otherwise send full list with IDs
-                if dirty_passengers:
-                    state["passengers"] = dirty_passengers
-                    # logger.debug(f"Sending {len(dirty_passengers)} dirty passengers to clients (total: {len(self.passengers)})")
-                else:
-                    # Fallback: send all passengers with IDs for consistency
-                    state["passengers"] = [p.to_dict(include_id=True) for p in self.passengers]
-                    # logger.debug(f"Sending all {len(self.passengers)} passengers to clients (full update)")
-            self._dirty["passengers"] = False
-
-        # Add modified trains
-        trains_data = {}
-        for name, train in self.trains.items():
-            train_data = train.to_dict()
-            if train_data:  # Only add if data has changed
-                trains_data[name] = train_data
-
-        # Add delivery zone if modified
-        if self._dirty["delivery_zone"]:
-            state["delivery_zone"] = self.delivery_zone.to_dict()
-            self._dirty["delivery_zone"] = False
-
-        if trains_data:
-            state["trains"] = trains_data
-            self._dirty["trains"] = False
-
-        # Add best scores if modified
-        if self._dirty["best_scores"]:
-            state["best_scores"] = self.best_scores
-            self._dirty["best_scores"] = False
-
-        return state
-
-    def get_state(self):
-        """Return the full game state"""
-        state = {}
-
-        # Add game dimensions
-        state["size"] = {
-            "game_width": self.game_width,
-            "game_height": self.game_height,
-        }
-
-        # Add grid size
-        state["cell_size"] = self.cell_size
-
-        # Add all passengers
-        state["passengers"] = [p.to_dict() for p in self.passengers]
-
-        # Add all trains with their complete data
-        trains_data = {}
-        for name, train in self.trains.items():
-            # Force all train data to be included by setting all dirty flags to True temporarily
-            original_dirty = train._dirty.copy()
-            for flag in train._dirty:
-                train._dirty[flag] = True
-            
-            # Get the full train data
-            train_data = train.to_dict()
-            
-            # Restore original dirty flags
-            train._dirty = original_dirty
-            
-            trains_data[name] = train_data
-
-        state["trains"] = trains_data
-
-        # Add delivery zone
-        state["delivery_zone"] = self.delivery_zone.to_dict()
-
-        # Add best scores
-        state["best_scores"] = self.best_scores
-
-        return state
-
-    def is_position_safe(self, x, y):
-        """Check if a position is safe for spawning"""
-        # Check the borders
-        safe_distance = self.cell_size * SPAWN_SAFE_ZONE
-        if (
-            x < safe_distance
-            or y < safe_distance
-            or x > self.game_width - safe_distance
-            or y > self.game_height - safe_distance
-        ):
-            return False
-
-        # Check other trains and wagons
-        for train in self.trains.values():
-            # Distance to the train
-            train_x, train_y = train.position
-            if abs(train_x - x) < safe_distance and abs(train_y - y) < safe_distance:
-                return False
-
-            # Distance to wagons
-            for wagon_x, wagon_y in train.wagons:
-                if (
-                    abs(wagon_x - x) < safe_distance
-                    and abs(wagon_y - y) < safe_distance
+        slots = list(range(self.room_state.room_choice.total_players))
+        self.random.shuffle(slots)
+        for slot in slots:
+            # Remove cells which are close to buses, unless we run out of
+            # cells to remove. Iterate in random slot order for fairness purpose.
+            bus = self.game_state.buses[slot]
+            if len(bus.positions) > 0:
+                for p in Game.neighboring_cells(
+                    bus.positions[0],
+                    self.room_state.spawn_passenger_away_from_bus_distance,
                 ):
-                    return False
+                    if len(available_cells) > 1:
+                        available_cells.discard(p)
+        pos = self.random.choice(list(available_cells))
+        value = self.random.choice(list(self.room_state.passenger_values))
+        destinations = self.destinations.copy()
+        if pos in self.room_state.map.delivery_zones:
+            destinations.remove(self.room_state.map.delivery_zones[pos])
+        destination = self.random.choice(list(destinations))
 
-        # Check delivery zone
-        delivery_zone = self.delivery_zone
-        if (
-            x > delivery_zone.x
-            and x < delivery_zone.x + delivery_zone.width
-            and y > delivery_zone.y
-            and y < delivery_zone.y + delivery_zone.height
-        ):
+        new_passenger = Passenger(
+            id=self.next_passenger_id, value=value, destination=destination
+        )
+        self.next_passenger_id += 1
+        self.update_passengers(new_passenger, pos)
+
+    def spawn_bus(self, slot: Slot):
+        positions = self.spawn_bus_recursive(slot)
+        bus = Bus(positions=positions, created_at=self.game_state.tick)
+        for p in positions:
+            self.buses[p] = bus
+        self.game_state.buses[slot] = bus
+
+    def spawn_bus_recursive(self, slot: Slot) -> list[Pos]:
+        """
+        Go through every valid position for the front of the bus
+        and try to build a bus.
+
+        This method can potentially take a bunch of time. The best
+        way to keep it fast is to ensure that maps are large enough.
+        """
+        self.random.shuffle(self.available_cells)
+        for x, y in self.available_cells:
+            p: list[Pos] = list()
+            if self._spawn_bus_recursive(x, y, p, self.room_state.bus_length):
+                return p
+
+        # If we get here, it means the map is too small for the number
+        # of buses or that we have some serious bug
+        assert False
+
+    def _spawn_bus_recursive(
+        self, x: int, y: int, partial_bus: list[Pos], length: int
+    ) -> bool:
+        """
+        Recursively extend the partial bus.
+        """
+        if length == 0:
+            # We are done
+            return True
+
+        if (x, y) not in self.room_state.map.available_cells:
+            # We encountered a wall
             return False
 
-        # Check other passengers
-        for passenger in self.passengers:
-            if passenger != self and (x, y) == passenger.position:
-                return False
+        if (x, y) in self.buses:
+            # We encountered another bus
+            return False
 
-        return True
-
-    def get_safe_spawn_position(self, max_attempts=100):
-        """Find a safe position for spawning"""
-        for _ in range(max_attempts):
-            # Position aligned on the grid
-            x = (
-                self.random.randint(
-                    SPAWN_SAFE_ZONE,
-                    (self.game_width // self.cell_size) - SPAWN_SAFE_ZONE,
-                )
-                * self.cell_size
-            )
-            y = (
-                self.random.randint(
-                    SPAWN_SAFE_ZONE,
-                    (self.game_height // self.cell_size) - SPAWN_SAFE_ZONE,
-                )
-                * self.cell_size
-            )
-
-            if self.is_position_safe(x, y):
-                return x, y
-
-        # Default position at the center
-        center_x = (self.game_width // 2) // self.cell_size * self.cell_size
-        center_y = (self.game_height // 2) // self.cell_size * self.cell_size
-        logger.warning(f"Using default center position: ({center_x}, {center_y})")
-        return center_x, center_y
-
-    def update_passengers_count(self):
-        """Update the number of passengers based on the number of trains"""
-        # Calculate the desired number of passengers based on the number of alive trains
-        alive_trains = [
-            train
-            for train in self.trains.values()
-            if self.contains_train(train.nickname)
-        ]
-        self.desired_passengers = len(alive_trains) // TRAINS_PASSENGER_RATIO
-        
-        # logger.debug(f"update_passengers_count: Alive trains: {len(alive_trains)}, Current passengers: {len(self.passengers)}, Desired: {self.desired_passengers}")
-
-        # Only add passengers if we need more - never remove them here
-        # Passengers will naturally decrease when picked up and not respawned
-        changed = False
-        while len(self.passengers) < self.desired_passengers:
-            new_passenger = Passenger(self)
-            self.passengers.append(new_passenger)
-            changed = True
-            # logger.debug(f"Added new passenger (total now: {len(self.passengers)})")
-
-        if changed:
-            self._dirty["passengers"] = True
-
-    def add_train(self, nickname):
-        """Add a new train to the game"""
-        # logger.debug(f"Adding train {nickname}")
-        # Check the cooldown
-        if nickname in self.dead_trains:
-            del self.dead_trains[nickname]
-
-        # Create the new train
-        spawn_pos = self.get_safe_spawn_position()
-        if spawn_pos:
-            # If the agent name is in the train_colors dictionary, use the color, otherwise generate a random color
-            if nickname in self.train_colors:
-                train_color = self.train_colors[nickname]
-            else:
-                train_color = generate_random_non_blue_color(self.random)
-                self.train_colors[nickname] = train_color
-
-            self.trains[nickname] = Train(
-                spawn_pos[0],
-                spawn_pos[1],
-                nickname,
-                train_color,
-                self.handle_train_death,
-                self.config.tick_rate,
-                REFERENCE_TICK_RATE
-            )
-            self.update_passengers_count()
+        if (x, y) in partial_bus:
+            # We encountered our current bus
+            return False
+        partial_bus.append((x, y))
+        if (
+            self._spawn_bus_recursive(x + 1, y, partial_bus, length - 1)
+            or self._spawn_bus_recursive(x - 1, y, partial_bus, length - 1)
+            or self._spawn_bus_recursive(x, y + 1, partial_bus, length - 1)
+            or self._spawn_bus_recursive(x, y - 1, partial_bus, length - 1)
+        ):
+            # One of the disjunctions passed, we are done
             return True
+
+        # Revert change to partial_bus and try creating the bus differently
+        partial_bus.pop()
         return False
 
-    def send_respawn_cooldown(self, nickname, death_reason):
-        """Send respawn cooldown to client"""
-        if nickname in self.trains:
-            # Register the death time
-            self.train_death_ticks[nickname] = self.current_tick
-            
-            # For tickrate < standard (e.g. 30), the ratio > 1, making cooldown longer in real time
-            # For tickrate > standard (e.g. 240), the ratio < 1, making cooldown shorter in real time
-            # cooldown_ticks = int(self.config.respawn_cooldown_seconds * REFERENCE_TICK_RATE)
-            # expected_respawn_tick = self.current_tick + cooldown_ticks
-            
-            # real_seconds = cooldown_ticks / self.config.tick_rate
-            # logger.debug(f"Train {nickname} died at tick {self.current_tick}, reason: {death_reason}")
-            # logger.debug(f"Expected respawn at tick {expected_respawn_tick} (after {cooldown_ticks} ticks, {real_seconds:.2f}s real time)")
+    def tick(self) -> Slot | None:
+        """
+        Increments the game state tick and returns the slot number of the player who gets to move.
+        Returns None when the game ends.
+        """
+        self.game_state.tick += 1
+        if self.game_state.tick >= self.room_state.game_duration_ticks:
+            return None
+        return self.game_state.tick % self.room_state.room_choice.total_players
 
-            # Clean up the last delivery time for this train
-            self.last_delivery_tick.pop(nickname, None)
+    def should_move(self, slot: Slot) -> bool:
+        bus = self.game_state.buses[slot]
+        if bus.respawn_at > 0:
+            if self.game_state.tick < bus.respawn_at:
+                # bus has crashed, they don't get to move yet
+                return False
+            self.spawn_bus(slot)
+        return True
 
-            # Notify the client of the cooldown
-            self.send_cooldown_notification(
-                nickname, self.config.respawn_cooldown_seconds, death_reason
-            )
-            # If the client is a bot
-            if nickname in self.ai_clients:
-                # Get the client object
-                client = self.ai_clients[nickname]
-                # Change the train's state
-                client.is_dead = True
-                client.death_tick = self.current_tick
-                client.waiting_for_respawn = True
-                client.respawn_cooldown = self.config.respawn_cooldown_seconds
-            return True
-        else:
-            logger.error(f"Train {nickname} not found in game")
-            return False
+    def move(self, slot: Slot, move: Move) -> None:
+        for passenger_id in move.drop:
+            self.drop(slot, passenger_id)
+        if move.direction is not None:
+            self.move_bus(slot, move.direction)
+        for passenger_id in move.pickup:
+            self.pickup(slot, passenger_id)
 
-    def handle_train_death(self, train_nicknames, death_reason):
-        """Handle the death of one or more trains"""
-        for nickname in train_nicknames:
-            train = self.trains.get(nickname)
-            if train:
-                train.set_alive(False)
-                self.send_respawn_cooldown(nickname, death_reason)
-                self.update_passengers_count()
-                train.reset()
-            else:
-                logger.warning(f"Train {nickname} not found in kill method")
-
-    def get_train_respawn_cooldown(self, nickname):
-        """Get remaining cooldown time for a train"""
-        if nickname in self.train_death_ticks:
-            ticks_elapsed = self.current_tick - self.train_death_ticks[nickname]
-            
-            # Calculate cooldown ticks with proper adjustment for game speed
-            cooldown_ticks = int(self.config.respawn_cooldown_seconds * REFERENCE_TICK_RATE)
-            
-            remaining_ticks = max(0, cooldown_ticks - ticks_elapsed)
-            # Return remaining ticks as seconds for consistency
-            return remaining_ticks / REFERENCE_TICK_RATE
-        return 0
-
-    def contains_train(self, nickname):
-        """Check if a train is in the game and alive"""
-        return nickname in self.trains and self.trains[nickname].alive
-
-    def check_collisions(self):
-        # Créer une copie du dictionnaire pour éviter de le modifier pendant l'itération
-        trains_copy = list(self.trains.items())
-        for _, train in trains_copy:
-            train.update(
-                self.trains,
-                self.game_width,
-                self.game_height,
-                self.cell_size,
-                self.current_tick
-            )
-
-            # Check for passenger collisions
-            for passenger in self.passengers[:]:
-                if train.position == passenger.position:
-                    train.add_wagons(nb_wagons=passenger.value)
-                    
-                    # Only respawn if we need more passengers, otherwise remove
-                    if len(self.passengers) <= self.desired_passengers:
-                        passenger.respawn()
-                        # logger.debug(f"Passenger picked up by {train.nickname} and respawned at {passenger.position}")
-                    else:
-                        self.passengers.remove(passenger)
-                        self._dirty["passengers"] = True
-                        self._passengers_need_full_update = True
-                        # logger.debug(f"Passenger picked up by {train.nickname} and removed (excess). Now {len(self.passengers)} passengers")
-
-            # Check for delivery zone collisions
-            if self.delivery_zone.contains(train.position):
-                # Check if enough ticks have passed since the last delivery for this train
-                if (
-                    train.nickname not in self.last_delivery_tick
-                    or self.get_ticks_since_last_delivery(train.nickname)
-                    >= int(self.config.delivery_cooldown_seconds * REFERENCE_TICK_RATE)
-                ):
-                    # Slowly popping wagons and increasing score
-                    wagon = train.pop_wagon()
-                    if wagon:
-                        train.update_score(train.score + 1)
-                        # Update best score if needed
-                        if train.score > self.best_scores.get(train.nickname, 0):
-                            self.best_scores[train.nickname] = train.score
-                            self._dirty["best_scores"] = True
-                        # Update the last delivery tick for this train
-                        self.last_delivery_tick[train.nickname] = self.current_tick
-
-    def get_ticks_since_last_delivery(self, nickname):
-        if nickname in self.last_delivery_tick:
-            return self.current_tick - self.last_delivery_tick[nickname]
-        else:
-            logger.warning(f"Train {nickname} not found in last_delivery_tick")
-            return 0
-
-    def update(self):
-        """Update game state"""
-        if not self.trains:  # Update only if there are trains
+    def pickup(self, slot: Slot, passenger_id: PassengerId) -> None:
+        pos = self.passengers.get(passenger_id)
+        if pos is None:
+            # Can't pickup passenger which isn't available
             return
 
-        with self.lock:
-            # Update all trains and check for death conditions
-            # trains_to_remove = []
-            self.check_collisions()
+        bus = self.game_state.buses[slot]
+        if bus.respawn_at > 0:
+            # Can't pickup if we crashed. This can happen if the current move
+            # crashed due to the order in which we process the move
+            return
+        bus_x, bus_y = bus.positions[0]
+        passenger_x, passenger_y = pos
+        d = self.room_state.passenger_pickup_from_bus_distance
+        if abs(bus_x - passenger_x) > d or abs(bus_y - passenger_y) > d:
+            # attempting to pickup passenger not located nearby
+            return
 
-            # Check for train deaths based on tick counter
-            death_ticks_to_check = self.train_death_ticks.copy()
-            for nickname, death_tick in death_ticks_to_check.items():                
-                # Calculate cooldown ticks with proper adjustment for game speed
-                cooldown_ticks = int(self.config.respawn_cooldown_seconds * REFERENCE_TICK_RATE)
-                
-                if self.current_tick >= death_tick + cooldown_ticks:
-                    # real_time_elapsed = (self.current_tick - death_tick) / self.config.tick_rate
-                    # logger.info(f"Train {nickname} cooldown expired at tick {self.current_tick} (after {self.current_tick - death_tick} ticks, {real_time_elapsed:.2f}s real time)")
-                    
-                    # Remove from death ticks dictionary
-                    if nickname in self.train_death_ticks:
-                        del self.train_death_ticks[nickname]
-                    
-                    # If the train is an AI, handle respawn
-                    if nickname in self.ai_clients:
-                        ai_client = self.ai_clients[nickname]
-                        if ai_client.is_dead and ai_client.waiting_for_respawn:
-                            # logger.info(f"Respawning AI client {nickname} after cooldown")
-                            if self.add_train(nickname):
-                                ai_client.waiting_for_respawn = False
-                                ai_client.is_dead = False
-                                # logger.debug(f"AI client {nickname} respawned after cooldown")
+        if len(bus.passengers) >= self.room_state.max_passengers:
+            # the bus is full
+            return
 
-            # Handle automatic respawn for AI clients
-            for ai_name, ai_client in self.ai_clients.items():
-                # Add automatic respawn logic
-                if ai_client.is_dead and ai_client.waiting_for_respawn:
+        passenger = self.game_state.passengers[pos]
+        assert passenger_id == passenger.id
+        self.remove_passengers(passenger, pos)
 
-                    cooldown = self.get_train_respawn_cooldown(ai_name)
-                    if cooldown <= 0:
-                        if self.add_train(ai_name):
-                            ai_client.waiting_for_respawn = False
-                            ai_client.is_dead = False
-                            # logger.info(f"AI client {ai_name} respawned")
-                            
+        self.game_state.buses[slot].passengers.add(passenger)
+        logger.debug(
+            f"#{self.room_id} {self.get_player(slot)}:{slot} picked up passenger {passenger_id}"
+        )
+
+    def drop(self, slot: Slot, passenger_id: int) -> None:
+        """
+        Rules for dropping passengers:
+        - passenger_id must be on a bus
+        - the bus must belong to slot
+        - if the bus's front is on the correct delivery zone
+          - the passenger is dropped off and the player's score is incremented
+        - otherwise, if the bus's front is not occupied by another passenger
+          - the passenger is dropped off
+        """
+        bus = self.game_state.buses[slot]
+        passenger = None
+        for p in bus.passengers:
+            if p.id == passenger_id:
+                passenger = p
+                break
+        if passenger is None:
+            # player attempted to drop passenger they aren't carrying
+            return
+
+        bus.passengers.remove(passenger)
+        pos = bus.positions[0]
+        d = self.room_state.map.delivery_zones.get(pos)
+        if d == passenger.destination:
+            self.game_state.scores[slot] = (
+                self.game_state.scores.get(slot, 0) + passenger.value
+            )
+            logger.debug(
+                f"#{self.room_id} {self.get_player(slot)}:{slot} dropped {passenger_id} ({passenger.value}) at their destination, new score: {self.game_state.scores[slot]}"
+            )
+            self.spawn_passenger()
+        else:
+            # Use the same logic as crash() to find a spot to drop off passenger
+            # TODO(alok): reduce copy-pasta
+            preferred_locations: set[Pos] = set()
+            for pos in bus.positions:
+                preferred_locations |= Game.neighboring_cells(
+                    pos, self.room_state.drop_passenger_from_bus_distance
+                )
+            preferred_locations &= self.room_state.map.available_cells
+            preferred_locations = (
+                preferred_locations - self.game_state.passengers.keys()
+            )
+            locations = list(preferred_locations)
+            self.random.shuffle(locations)
+            if len(locations) > 0:
+                # We found a spot for this passenger
+                p = locations.pop()
+                self.update_passengers(passenger, p)
+            else:
+                # We failed to find a spot for this passenger, respawn a new passenger
+                self.spawn_passenger()
+
+    def move_bus(self, slot: Slot, direction: Dir) -> None:
+        bus = self.game_state.buses[slot]
+        x, y = bus.positions[0]
+        dx = 0
+        dy = 0
+        match direction:
+            case Dir.UP:
+                dy = -1
+            case Dir.RIGHT:
+                dx = 1
+            case Dir.DOWN:
+                dy = 1
+            case Dir.LEFT:
+                dx = -1
+        new_x = x + dx
+        new_y = y + dy
+        new_pos = (new_x, new_y)
+        crashed = False
+        if new_pos not in self.room_state.map.available_cells:
+            crashed = True
+        elif (
+            new_x < 0
+            or new_y < 0
+            or new_x >= self.room_state.map.width
+            or new_y >= self.room_state.map.height
+        ):
+            crashed = True
+        if new_pos in self.buses:
+            crashed = True
+        if crashed:
+            self.crashed(slot, new_x, new_y)
+            return
+        del self.buses[bus.positions[-1]]
+        self.buses[new_pos] = bus
+        for i in range(len(bus.positions) - 1, 0, -1):
+            bus.positions[i] = bus.positions[i - 1]
+        bus.positions[0] = new_pos
+
+    def crashed(self, slot: int, new_x: int, new_y: int):
+        logger.debug(
+            f"#{self.room_id} {self.get_player(slot)}:{slot} crashed their bus ({new_x}, {new_y})"
+        )
+        bus = self.game_state.buses[slot]
+        bus.respawn_at = self.game_state.tick + self.room_state.respawn_ticks
+
+        preferred_locations: set[Pos] = set()
+        for pos in bus.positions:
+            preferred_locations |= Game.neighboring_cells(
+                pos, self.room_state.drop_passenger_from_bus_distance
+            )
+            del self.buses[pos]
+        bus.positions = []
+
+        preferred_locations &= self.room_state.map.available_cells
+        preferred_locations = preferred_locations - self.game_state.passengers.keys()
+        locations = list(preferred_locations)
+        self.random.shuffle(locations)
+        for passenger in bus.passengers:
+            if len(locations) > 0:
+                # we found a spot for this passenger
+                p = locations.pop()
+                self.update_passengers(passenger, p)
+            else:
+                # We failed to find a spot for this passenger.
+                # Respawn a new passenger.
+                self.spawn_passenger()
+        bus.passengers = set()
+
+    def get_player(self, slot: int) -> str:
+        for player in self.room_state.players:
+            if player.slot == slot:
+                return player.teamname
+        return "?"

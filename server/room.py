@@ -1,1067 +1,288 @@
-from __future__ import annotations
-
-import base64
-import json
+import asyncio
+import datetime
+import importlib
 import logging
+import math
 import random
-import threading
-import time
-import zlib
+from asyncio import StreamReader, StreamWriter
+from typing import Awaitable
 
-from tqdm import tqdm
-
-from common.server_config import ServerConfig
-from common import stats_manager
-from common.constants import REFERENCE_TICK_RATE
-from common.performance_profiler import PerformanceProfiler
-from common.messages import (
-    GameStartedSuccessMessage,
-    StateMessage,
-    GameOverMessage,
-    GameOverData,
-    FinalScoreEntry,
-    WaitingRoomMessage,
-    WaitingRoomData,
-    InitialStateMessage,
-    InitialStateData,
-    SpawnSuccessMessage,
-    RespawnFailedMessage,
-)
-
+from common.base_agent import BaseAgent
+from common.config import ServerConfig
+from common.messages import GameUpdate, JoinRequest, Message, Move, RoomUpdate
+from common.state import Dest, GameState, Map, Player, Pos, RoomChoice, RoomState, Slot
 from server.game import Game
-from server.ai_client import AIClient
 
-# Configure logger
 logger = logging.getLogger("server.room")
-# Log level will be set by the server.py setup_server_logger function
 
-# Compression threshold in bytes - messages larger than this will be compressed
-COMPRESSION_THRESHOLD = 1024  # 1KB
-
-
-def compress_message(data: str) -> str:
-    """Compress a message if it exceeds the threshold.
-    
-    Args:
-        data: JSON string to potentially compress
-        
-    Returns:
-        Original data or compressed wrapper with _compressed marker
-    """
-    if len(data) <= COMPRESSION_THRESHOLD:
-        return data
-    
-    try:
-        compressed = zlib.compress(data.encode(), level=6)
-        # Only use compression if it actually reduces size by at least 20%
-        if len(compressed) < len(data) * 0.8:
-            compressed_b64 = base64.b64encode(compressed).decode()
-            return json.dumps({"_compressed": True, "data": compressed_b64}) + "\n"
-    except Exception as e:
-        logger.debug(f"Compression failed, sending uncompressed: {e}")
-    
-    return data
-
-# List of names for AI-controlled clients
-AI_NAMES = [
-    "Bot Adrian",
-    "Bot Albert",
-    "Bot Allen",
-    "Bot Andy",
-    "Bot Arnold",
-    "Bot Bert",
-    "Bot Cecil",
-    "Bot Charles",
-    "Bot Clarence",
-    "Bot Elmer",
-    "Bot Ernest",
-    "Bot Felix",
-    "Bot Frank",
-    "Bot Fred",
-    "Bot Gilbert",
-    "Bot Gus",
-    "Bot Hank",
-    "Bot Howard",
-    "Bot James",
-    "Bot Lester",
-]
+# Room code handles connections to the client and contains
+# an instance of a Game.
+#
+# Also handles waiting for the room to fill up or time to elapse prior
+# to starting the game.
+#
+# The code assumes it's always running on the same thread so doesn't use any locks. This decision
+# should be fine since the game is I/O heavy and the bottleneck is probably
+# the network layer.
+#
+# In order to decide when to start a room, the following logic is implemented:
+# - the asyncio task handling the first player to join a room waits on a combination
+#   of asyncio.Event and a timeout.
+# - other asyncio tasks handle subsequent players who join the room. Those tasks terminate right away.
+# - the asyncio task which handles the last player to join the room signals to the first task that the room
+#   is ready to start and terminates.
+# - the first task then runs the room.
+# - if the last player never joins the room, the timeout also trigger the first task to run the room.
 
 
 class Room:
-    # TODO(alok): remove nb_clients_max and use config.clients_per_room
     def __init__(
         self,
+        room_id: int,
         config: ServerConfig,
-        room_id,
-        nb_players_max,
-        running,
-        server_socket,
-        send_cooldown_notification,
-        remove_room,
-        addr_to_sciper,
-        record_disconnection,
-        tqdm_message=None,
-        grading_scores=None,
-        run_results=None,
-        current_run_index=None,
-        current_nb_players=None,
-        bot_seed=None,
-    ):
+        random: random.Random,
+        room_choice: RoomChoice,
+    ) -> None:
+        self.room_id = room_id  # for debugging purpose
+        logger.info(f"#{room_id} creating: {room_choice}")
+        self.random = random
         self.config = config
-        self.id = room_id
-        self.nb_players_max = nb_players_max
-        self.running = running
-        self.server_socket = server_socket
-        self.send_cooldown_notification = send_cooldown_notification
-        self.remove_room = remove_room
-        self.addr_to_sciper = addr_to_sciper
-        self.record_disconnection = record_disconnection
-        self.tqdm_message = tqdm_message
-        self.grading_scores = grading_scores
-        self.run_results = run_results
-        self.current_run_index = current_run_index
-        self.current_nb_players = current_nb_players
+        self.created_at = datetime.datetime.now()
 
-        # Initialize random seed if provided directly or in config, otherwise generate one
-        if bot_seed is not None:
-            self.bot_seed = bot_seed
-        elif self.config.seed is not None:
-            self.bot_seed = self.config.seed
-        else:
-            self.bot_seed = random.randint(0, 2**32 - 1)
-        self.random = random.Random(self.bot_seed)
-
-        logger.debug(f"Room {self.id} created with seed {self.bot_seed}")
-
-        self.clients = {}  # {addr: nickname}
-        self.client_game_modes = {}  # {addr: game_mode}
-        self.game_thread = None
-
-        self.game_over = False  # Track if the game is over
-        self.room_creation_time = time.time()  # Track when the room was created
-        self.first_client_join_time = None  # Track when the first client joins
-        self.stop_waiting_room = False  # Flag to stop the waiting room thread - Initialized BEFORE thread start
-
-        self.waiting_room_thread = threading.Thread(target=self.broadcast_waiting_room)
-        self.waiting_room_thread.daemon = True
-        self.waiting_room_thread.start()
-
-        self.tick_counter = 0  # Track the number of ticks since game start
-
-        self.used_ai_names = set()  # Track AI names that are already in use
-        self.ai_clients = {}  # Maps train names to AI clients
-        self.AI_NAMES = AI_NAMES  # Store the AI names as an instance attribute
-        self.used_nicknames = set(self.clients.keys())
-
-        self.game = Game(
-            self.config,
-            self.send_cooldown_notification,
-            self.nb_players_max,
-            self.id,
-            self.bot_seed,
-            self.random,
+        self.room_state = RoomState(
+            players=set(),
+            room_choice=room_choice,
+            created_at=math.floor(self.created_at.timestamp()),
+            room_max_wait_game_start_seconds=config.room_max_wait_game_start_seconds,
+            game_duration_ticks=config.game_duration_ticks * room_choice.total_players,
+            desired_passengers=config.desired_passengers,
+            respawn_ticks=config.respawn_ticks * room_choice.total_players,
+            bus_length=random.randint(config.bus_min_length, config.bus_max_length),
+            max_passengers=config.max_passengers,
+            spawn_passenger_away_from_bus_distance=config.spawn_passenger_away_from_bus_distance,
+            drop_passenger_from_bus_distance=config.drop_passenger_from_bus_distance,
+            passenger_values=config.passenger_values,
+            passenger_pickup_from_bus_distance=config.passenger_pickup_from_bus_distance,
+            map=Room.load_map(config, random, room_choice.map_choice),
         )
+        self.streams: dict[Slot, tuple[StreamReader, StreamWriter]] = {}
+        self.local_agents: dict[Slot, BaseAgent] = {}
 
-        self.profiler = PerformanceProfiler(
-            enabled=self.config.enable_profiling,
-            output_dir=self.config.profiling_output_dir,
-            interval_seconds=self.config.profiling_interval_seconds,
-            profile_name=f"server_room_{self.id}"
+        self.available_slots: list[Slot] = list(
+            range(self.room_state.room_choice.total_players)
         )
+        random.shuffle(self.available_slots)
 
-        logger.debug(f"Room {room_id} created with number of clients {nb_players_max}")
+        self.full_event = asyncio.Event()  # set when the room is full
 
-    def start_game(self):
-        logger.debug("Starting game...")
+    async def join(
+        self,
+        join_request: JoinRequest,
+        reader: StreamReader,
+        writer: StreamWriter,
+    ) -> bool:
+        """
+        Joins the room. Returns False if the room is full.
+        """
+        assert join_request.room_choice == self.room_state.room_choice
+        if self.is_full():
+            return False
+        slot = self.available_slots.pop()
+        logger.info(f"#{self.room_id} joined: {join_request.teamname}:{slot}")
+        player = Player(teamname=join_request.teamname, slot=slot, is_staff_agent=False)
+        self.room_state.players.add(player)
+        self.streams[slot] = (reader, writer)
+        await self.notify_all(True, None, None)
+        if self.is_full():
+            self.full_event.set()
+        return True
 
-        # Stop the waiting room thread by setting the flag
-        self.stop_waiting_room = True
-        # self.waiting_room_thread.join() # Cannot join from the same thread
+    def is_full(self) -> bool:
+        players = len(self.room_state.players)
+        total = self.room_state.room_choice.total_players
+        min_staff_agents = self.room_state.room_choice.min_staff_agents
+        return players >= total - min_staff_agents
 
-        if self.game_thread:
-            return
-
-        # Reset tick counter            
-        self.game.start_time = time.time()  # Start at tick 0
-        self.game.game_started = True
-        self.game.start_time_ticks = 0
-        self.game.current_tick = 0
-
-        logger.debug(f"Game started in room {self.id} at tick {self.tick_counter}")
-        logger.debug(f"Clients in room {self.id}: {self.clients}")
-
-        # Send game_started_success message - Moved before the grading mode check
-        response = GameStartedSuccessMessage()
-        # Send response to all clients
-        for client_addr in list(self.clients.keys()):
-            try:
-                # Skip AI clients - they don't need network messages
-                if (
-                    isinstance(client_addr, tuple)
-                    and len(client_addr) == 2
-                    and client_addr[0] == "AI"
-                ):
-                    continue
-                self.server_socket.sendto(
-                    response.to_json().encode(), client_addr
-                )
-            except Exception as e:
-                logger.error(f"Error sending start success to client: {e}")
-        
-        self.add_all_trains()
-        
-        current_players = self.get_player_count()
-        nb_bots_needed = self.nb_players_max - current_players
-        self.fill_with_bots(nb_bots_needed)
-
-        # for ai_name in list(self.game.ai_clients.keys()):
-            # if ai_name not in self.game.trains:
-            #     logger.debug(f"Adding train for AI client {ai_name}")
-            
-            # Log train status
-            # if ai_name in self.game.trains:
-            #     logger.debug(f"Train {ai_name} initialized at position {self.game.trains[ai_name].position}")
-            # else:
-            #     logger.warning(f"Failed to add train for AI client {ai_name}")
-        
-        # In grading mode, we run the simulation directly in this thread
-        # Create and start game thread
-        self.game_thread = threading.Thread(target=self.run_game)
-        self.game_thread.daemon = True
-        self.game_thread.start()
-
-        logger.debug(
-            f"Game started in room {self.id} with {len(self.clients)} clients"
-        )
-            
-    def run_game(self):
-        """Run the game in grading mode - directly in the room thread without using broadcast_game_state"""
-        # Define the standard tick rate (for reference)
-        reference_tickrate = REFERENCE_TICK_RATE
-        
-        # Calculate total number of updates based on the standard tickrate
-        # This ensures that game duration is consistent regardless of the configured tickrate
-        total_updates = int(self.config.game_duration_seconds * reference_tickrate)
-        
-        # Calculate how much game time passes per tick (in seconds)
-        game_seconds_per_tick = 1.0 / reference_tickrate
-        
-        # Calculate how much real time should pass per tick (in seconds)
-        real_seconds_per_tick = 1 / self.config.tick_rate
-        
-        # Log the timing information
-        if self.config.tick_rate == reference_tickrate:
-            speed_description = "normal speed"
-        elif self.config.tick_rate > reference_tickrate:
-            speed_description = f"{self.config.tick_rate/reference_tickrate:.1f}x faster than normal"
-        else:
-            speed_description = f"{reference_tickrate/self.config.tick_rate:.1f}x slower than normal"
-            
-        logger.info(f"Game running at {speed_description} (tickrate: {self.config.tick_rate}).")
-        logger.info(f"Acceleration in comparison to reference tickrate: {self.config.tick_rate / reference_tickrate:.2f}")
-        logger.info(f"Game seconds per tick: {game_seconds_per_tick:.4f}s")
-        logger.info(f"Real seconds per tick: {real_seconds_per_tick*1000:.2f}ms")
-        
-        # Initialize game time to zero
-        game_time_elapsed = 0.0
-        
-        # Store the actual game start time for real-time tracking
-        game_start_time = time.time()
-        
-        # Run the simulation for the calculated number of ticks
-        # Use tqdm progress bar only in grading mode
-        if self.config.grading_mode:
-            iteration_range = tqdm(range(total_updates), desc=self.tqdm_message, unit="ticks")
-        else:
-            iteration_range = range(total_updates)
-            
-        for update_count in iteration_range:
-            if not self.running or self.game_over:
-                break
-            
-            self.profiler.start_timer("tick_total")
-                
-            # Synchronize update_count and tick_counter
-            self.tick_counter = update_count + 1
-            self.game.current_tick = self.tick_counter
-            
-            # Update game time - this is completely independent of real time
-            # Each tick represents a fixed amount of game time
-            game_time_elapsed += game_seconds_per_tick
-
-            # Update game state
-            self.profiler.start_timer("game_update")
-            self.game.update()
-            self.profiler.end_timer("game_update")
-            
-            # Calculate remaining game time
-            remaining_game_time = self.config.game_duration_seconds - game_time_elapsed
-            
-            # Prepare the game state to send to clients
-            self.profiler.start_timer("state_preparation")
-            state = self.game.get_dirty_state()
-            
-            # Add remaining time to state data only if it has changed significantly
-            if self.game.last_remaining_time is None or round(remaining_game_time) != round(self.game.last_remaining_time):
-                state["remaining_time"] = round(remaining_game_time)
-                self.game.last_remaining_time = remaining_game_time
-
-            # Create the data packet
-            state_message = StateMessage(data=state)
-            self.profiler.end_timer("state_preparation")
-
-            if state:  # If data has been modified
-                # Update all AI clients
-                self.profiler.start_timer("ai_update")
-                for ai_client in self.ai_clients.values():
-                    ai_client.update_state(state_message.model_dump())
-                self.profiler.end_timer("ai_update")
-                
-                # Send the state to all clients (with optional compression)
-                self.profiler.start_timer("network_send")
-                state_json = state_message.to_json()
-                compressed_json = compress_message(state_json)
-                bytes_sent = 0
-                for client_addr in list(self.clients.keys()):
-                    try:
-                        # Skip AI clients - they don't need network messages
-                        if (
-                            isinstance(client_addr, tuple)
-                            and len(client_addr) == 2
-                            and client_addr[0] == "AI"
-                        ):
-                            continue
-
-                        self.server_socket.sendto(
-                            compressed_json.encode(), client_addr
-                        )
-                        bytes_sent += len(compressed_json)
-                    except Exception as e:
-                        logger.error(f"Error sending state to client: {e}")
-                self.profiler.end_timer("network_send")
-                self.profiler.record_network_event("state_broadcast", bytes_sent)
-            
-            self.profiler.end_timer("tick_total")
-            
-            # Record metrics every 60 ticks
-            if update_count % 60 == 0:
-                self.profiler.record_metric("game", "trains_count", len(self.game.trains))
-                self.profiler.record_metric("game", "passengers_count", len(self.game.passengers))
-                self.profiler.record_metric("game", "clients_count", len(self.clients))
-            
-            # Sleep if necessary to maintain the desired tick rate in real time
-            # Skip sleep in grading mode to run as fast as possible
-            if not self.config.grading_mode:
-                if real_seconds_per_tick > 0:
-                    # Calculate elapsed real time since game start
-                    elapsed_real_time = time.time() - game_start_time
-                    # Calculate target real time based on current update count and target tick rate
-                    target_real_time = (update_count + 1) * real_seconds_per_tick
-                    # Calculate time to sleep to catch up with the target time
-                    time_to_sleep = max(0, target_real_time - elapsed_real_time)
-                    
-                    if time_to_sleep > 0:
-                        time.sleep(time_to_sleep)
-                else:
-                    # log that the loop is late
-                    logger.warning(f"Game loop is late by {-time_to_sleep:.2f} seconds")
-
-        # Game has finished
-        end_time = time.time()
-        total_real_time = end_time - game_start_time
-        logger.info(f"Game completed in {total_real_time:.2f} real seconds")
-        logger.info(f"Game time elapsed: {game_time_elapsed:.2f} seconds")
-        logger.info(f"Time ratio: {game_time_elapsed/total_real_time:.2f}x")
-        logger.info(f"Actual ticks completed: {self.tick_counter}")
-        logger.info(f"Ticks per second: {self.tick_counter/total_real_time:.1f}")
-        logger.info(f"Final scores: {self.game.best_scores}")
-
-        logger.info(f"Game in room {self.id} ending after {self.tick_counter} ticks, game time: {game_time_elapsed:.2f}s, real time: {total_real_time:.2f}s")
-        logger.info(f"Stopping profiler (enabled={self.profiler.enabled})...")
-        self.profiler.stop()
-        logger.info("Profiler stopped")
-        self.end_game()
-
-    def end_game(self):
-        """End the game and send final scores to all clients"""
-        if self.game_over:
-            return  # Game already ended
-
-        self.game_over = True
-
-        # Collect final scores
-        final_scores = []
-
-        # log the best scores
-        logger.debug(f"Best scores: {self.game.best_scores}")
-
-        participant_scores = []  # List of tuples: (id, score, is_human)
-        participant_id = None  # Initialize participant_id to avoid UnboundLocalError
-        for nickname, best_score in self.game.best_scores.items():
-            # logger.debug(f"Train {nickname} has best score {best_score}")
-
-            # Find the client address associated with this train name
-            client_addr = None
-            for addr, name in self.clients.items():
-                if name == nickname:
-                    client_addr = addr
-                    break
-
-            final_scores.append({"name": nickname, "best_score": best_score})
-
-            # Update best score in the scores file
-            # if self.game.high_score_all_time.update(nickname, best_score):
-            #     scores_updated = True
-            #     logger.info(f"Updated best score for {nickname}: {best_score}")
-
-            participant_id = None
-            is_human = False
-            # Check if it's a human player
-            found_human = False
-            for addr, name in self.clients.items():
-                if name == nickname:
-                    sciper = self.addr_to_sciper.get(addr)
-                    if sciper:
-                        participant_id = sciper
-                        is_human = True
-                        found_human = True
-                        break
-            # If not found as human, assume it's an AI
-            if not found_human:
-                participant_id = nickname  # Use name as ID for bots
-                is_human = False
-
-        if participant_id:
-            participant_scores.append((participant_id, best_score, is_human))
-
-        # --- Record Bot vs Human Scores ---
-        human_players = [(p_id, score) for p_id, score, is_human in participant_scores if is_human]
-        bot_players = [(p_id, score) for p_id, score, is_human in participant_scores if not is_human]
-
-        if human_players and bot_players:
-            logger.debug(f"Recording bot vs human scores for room {self.id}")
-            for human_id, human_score in human_players:
-                for bot_id, bot_score in bot_players:
-                    logger.debug(f"  Recording: Human {human_id} ({human_score}) vs Bot {bot_id} ({bot_score})")
-                    stats_manager.record_bot_vs_human_score(human_id, bot_id, human_score, bot_score)
-
-        # --- Update Excel scores for grading mode ---
-        if self.config.grading_mode and hasattr(self, 'student_nickname'):
-            # Get the sorted scores to determine rankings
-            sorted_scores = sorted([(nickname, score) for nickname, score in self.game.best_scores.items()], key=lambda x: x[1], reverse=True)
-            
-            # Find the student agent's position
-            student_position = None
-            for i, (nickname, score) in enumerate(sorted_scores):
-                if nickname == self.student_nickname:
-                    student_position = i
-                    break
-            
-            if student_position is not None:
-                # Calculate points based on position
-                nb_players = self.nb_players_max
-                points = 0
-                
-                if student_position == 0:  # First place
-                    points = nb_players
-                    logger.info(f"Agent {self.student_nickname} came in 1st place, earning {points} points")
-                elif student_position == 1:  # Second place
-                    points = nb_players / 2
-                    logger.info(f"Agent {self.student_nickname} came in 2nd place, earning {points} points")
-                elif student_position == 2:  # Third place
-                    points = nb_players / 4
-                    logger.info(f"Agent {self.student_nickname} came in 3rd place, earning {points} points")
-                else:
-                    logger.info(f"Agent {self.student_nickname} came in {student_position+1}th place, earning 0 points")
-                
-                # Extract agent name from student_nickname (remove 'Student_' prefix)
-                agent_name = self.student_nickname.replace('Student_', '')
-                
-                # Use grading_scores dictionary passed during room creation
-                if self.grading_scores is not None and agent_name in self.grading_scores:
-                    # Use current_nb_players passed during room creation or fallback to nb_players_max
-                    current_nb_players = self.current_nb_players if self.current_nb_players is not None else self.nb_players_max
-                    
-                    if current_nb_players in self.grading_scores[agent_name]:
-                        self.grading_scores[agent_name][current_nb_players] += points
-                        logger.info(f"Updated scores for {agent_name} with {current_nb_players} players: {self.grading_scores[agent_name][current_nb_players]}")
-                    else:
-                        logger.warning(f"Unable to update scores: {current_nb_players} not found in score dictionary for {agent_name}")
-            else:
-                logger.warning("Student position is None")
-                # Set student score to 0
-                
-            # --- Store run results for Excel file ---
-            if self.run_results is not None:
-                # Get student score
-                student_score = 0
-                for nickname, score in sorted_scores:
-                    if nickname == self.student_nickname:
-                        student_score = score
-                        break
-                
-                # Create a dictionary to store the run results
-                run_result = {
-                    "run": self.current_run_index+1,
-                    "nb players": self.nb_players_max,
-                    "student": self.student_nickname,
-                    "student score": student_score
-                }
-                
-                # Add bot scores
-                bot_index = 1
-                for nickname, score in sorted_scores:
-                    if nickname != self.student_nickname and bot_index <= 3:
-                        run_result[f"bot{bot_index}"] = nickname
-                        run_result[f"score bot {bot_index}"] = score
-                        bot_index += 1
-                
-                # Add the run result to the list
-                self.run_results.append(run_result)
-                logger.info(f"Stored run results for {self.student_nickname}: {run_result}")
-            else:
-                logger.warning("No run_results list found in the room object")
-
-        elif hasattr(self, 'student_nickname'):
-            logger.info(f"Not in grading mode, skipping score update for {self.student_nickname}")
-        else:
-            logger.debug("No student agent in this room, skipping score update")
-
-        # # --- Stats: Record Game Results ---
-        # if final_scores and not self.config.grading_mode:
-        #     winner_nickname = final_scores[0]["name"]
-
-        #     # We only need the winner's nickname and whether they are AI for context
-        #     winner_is_ai = winner_nickname in self.ai_clients
-
-        #     for i, score_entry in enumerate(final_scores):
-        #         logger.debug(f"Processing score entry {i}: {score_entry}")
-        #         nickname = score_entry["name"]
-        #         addr = next((a for a, n in self.clients.items() if n == nickname), None)
-        #         is_ai = nickname in self.ai_clients
-
-        #         # --- Skip AI players for stat recording ---
-        #         if is_ai:
-        #             logger.debug(f"Skipping stats for AI player {nickname}")
-        #             continue  # Only record stats for human players
-
-        #         # --- Get Human Player Info ---
-        #         if not addr:  # Should only happen if human client disconnected *during* end_game processing?
-        #             logger.warning(
-        #                 f"Stats: Could not find address for player {nickname} in room {self.id}. Skipping stats."
-        #             )
-        #             continue
-
-        #         # Get sciper from the server instance using the address
-        #         player_sciper = self.addr_to_sciper.get(addr)
-        #         logger.debug(
-        #             f"Stats: Found sciper {player_sciper} for human player {nickname} ({addr})"
-        #         )
-
-        #         if not player_sciper:
-        #             logger.warning(
-        #                 f"Stats: Could not find sciper for human player {nickname} ({addr}). Skipping stats."
-        #             )
-        #             continue
-
-        #         # --- Determine Opponent Context ---
-        #         is_winner = nickname == winner_nickname
-        #         opponent_nickname = "N/A"
-        #         opponent_is_bot = False
-
-        #         logger.debug(
-        #             f"Stats: Determining opponent context for {nickname} - is winner: {is_winner}"
-        #         )
-
-        #         if is_winner:
-        #             logger.debug(
-        #                 f"Human player {nickname} is a winner - finding opponent"
-        #             )
-        #             # Winner: Find highest scoring opponent for context (can be human or AI)
-        #             if len(final_scores) > 1:
-        #                 logger.debug(
-        #                     f"Multiple human players in room {self.id} - finding highest scoring opponent"
-        #                 )
-        #                 opponent_score_entry = final_scores[1]
-        #                 opponent_nickname = opponent_score_entry["name"]
-        #                 opponent_is_bot = opponent_nickname in self.ai_clients
-        #             else:
-        #                 logger.debug(
-        #                     f"Only one human player in room {self.id} - no opponent"
-        #                 )
-        #                 opponent_nickname = "No Opponent"
-        #                 opponent_is_bot = False  # No opponent
-        #         else:
-        #             logger.debug(
-        #                 f"Human player {nickname} is a loser - opponent is {winner_nickname}"
-        #             )
-        #             # Loser: Opponent context is the winner
-        #             opponent_nickname = winner_nickname
-        #             opponent_is_bot = winner_is_ai
-
-        #         # --- Record Stats ---
-        #         try:
-        #             logger.debug(
-        #                 f"Recording game result for sciper {player_sciper} - win: {is_winner}, opponent: {opponent_nickname}, opponent is bot: {opponent_is_bot}"
-        #             )
-        #             stats_manager.record_game_result(
-        #                 sciper=player_sciper,
-        #                 win=is_winner,
-        #                 opponent_is_bot=opponent_is_bot,
-        #                 opponent_name=opponent_nickname,
-        #             )
-        #         except Exception as e:
-        #             logger.error(
-        #                 f"Stats: Failed to record game result for {player_sciper}: {e}"
-        #             )
-
-        # # === Record last match scores for all pairs ===
-        # logger.debug(
-        #     f"Recording last match scores for all pairs. Participants: {participant_scores}"
-        # )
-        # if len(participant_scores) >= 2:
-        #     for i in range(len(participant_scores)):
-        #         for j in range(i + 1, len(participant_scores)):
-        #             id1, score1, is_human1 = participant_scores[i]
-        #             id2, score2, is_human2 = participant_scores[j]
-
-        #             # Call record_bot_vs_human_score ONLY for human vs bot pairs
-        #             if is_human1 and not is_human2:
-        #                 stats_manager.record_bot_vs_human_score(
-        #                     human_sciper=id1, bot_nickname=id2, human_score=score1, bot_score=score2
-        #                 )
-        #             elif not is_human1 and is_human2:
-        #                 stats_manager.record_bot_vs_human_score(
-        #                     human_sciper=id2, bot_nickname=id1, human_score=score2, bot_score=score1
-        #                 )
-                    # No call for human-human or bot-bot pairs as last_match_scores was removed
-
-        # Save scores if any were updated
-        # if scores_updated:
-        #     self.game.high_score_all_time.save()
-
-        # Create game over message
-        game_over_message = GameOverMessage(
-            data=GameOverData(
-                message="Game is over. Time limit reached.",
-                final_scores=[FinalScoreEntry(**score) for score in final_scores],
-                duration=self.config.game_duration_seconds,
-                best_scores=self.game.best_scores,
-            )
-        )
-
-        # Send to all clients
-        state_json = game_over_message.to_json()
-        for client_addr in list(self.clients.keys()):
-            try:
-                # Skip AI clients - they don't need network messages
-                if (
-                    isinstance(client_addr, tuple)
-                    and len(client_addr) == 2
-                    and client_addr[0] == "AI"
-                ):
-                    continue
-
-                self.server_socket.sendto(state_json.encode(), client_addr)
-            except Exception as e:
-                logger.error(f"Error sending game over data to client: {e}")
-
-        self.game.running = False
-
-        # Record disconnection stats for all human clients at game end
-        # This ensures playtime is recorded even if clients disconnect without proper notification
-        for addr in list(self.clients.keys()):
-            # Skip AI clients
-            if isinstance(addr, tuple) and len(addr) == 2 and addr[0] == "AI":
+    async def notify_all(
+        self,
+        room_state: bool,
+        game_state: GameState | None,
+        except_slot: Slot | None,
+    ) -> None:
+        promises: list[Awaitable[None]] = []
+        for slot, (_, writer) in self.streams.items():
+            if slot == except_slot:
                 continue
-                
-            # Call handle_client_disconnection for human clients
-            try:
-                logger.info(f"Recording end-of-game stats for client at {addr}")
-                self.record_disconnection(self.addr_to_sciper[addr], "game_over")
-            except Exception as e:
-                logger.error(f"Error recording end-of-game stats for {addr}: {e}")
+            room_update = None
+            if room_state:
+                room_update = RoomUpdate(slot=slot, room_state=self.room_state)
+            game_update = None
+            if game_state is not None:
+                game_update = GameUpdate(game_state=game_state, move_expected=False)
+            msg = Message(room_update=room_update, game_update=game_update)
+            promises.append(msg.send(writer))
+        await asyncio.gather(*promises)
 
-        # Close the room after a short delay to ensure all clients receive the game over message
-        def close_room_after_delay():
-            time.sleep(
-                2
-            )  # Wait 2 seconds to ensure clients receive the game over message
-            logger.debug(f"Closing room {self.id} after game over")
-            self.running = False
-            # Remove the room from the server
-            self.remove_room(self.id)
+    async def wait_for_start(self) -> None:
+        """
+        Returns after enough players are in the room or some amount of time has elapsed.
+        """
+        try:
+            t = self.config.room_max_wait_game_start_seconds
+            await asyncio.wait_for(self.full_event.wait(), t)
+            logger.info(f"#{self.room_id} ready to start (enough players)")
+        except TimeoutError:
+            logger.info(f"#{self.room_id} ready to start (elapsed)")
 
-        # Start a thread to close the room after a delay
-        close_thread = threading.Thread(target=close_room_after_delay)
-        close_thread.daemon = True
-        close_thread.start()
+        should_notify = False
+        total_players = self.room_state.room_choice.total_players
+        while len(self.room_state.players) < total_players:
+            self.add_agent()
+            should_notify = True
+        if should_notify:
+            await self.notify_all(True, None, None)
 
-    def is_full(self):
-        nb_players = self.get_player_count()
-        return nb_players >= self.nb_players_max
+    def add_agent(self):
+        agent_file_name = self.random.choice(self.config.agents)
 
-    def get_players(self):
-        return [
-            self.clients[addr]
-            for addr in self.clients
-            if addr in self.client_game_modes
-            and self.client_game_modes[addr] != "observer"
-        ]
+        logger.info(f"#{self.room_id} loading agent: {agent_file_name}")
+        agent_file_name = agent_file_name.removesuffix(".py")
+        module_path = f"common.agents.{agent_file_name}"
+        try:
+            module = importlib.import_module(module_path)
+        except ModuleNotFoundError as e:
+            logger.error(
+                f"#{self.room_id} agent file {agent_file_name} not found in common/agents/ folder. Check your config.json."
+            )
+            raise e
+        agent: BaseAgent = module.Agent()
 
-    def get_player_count(self):
-        # Count human players (non-observers)
-        player_count = len(
-            [mode for mode in self.client_game_modes.values() if mode != "observer"]
-        )
-        # Add AI clients if the attribute exists
-        if hasattr(self, 'ai_clients'):
-            player_count += len(self.ai_clients)
-        return player_count
+        slot = self.available_slots.pop()
+        logger.info(f"#{self.room_id} added: {agent.teamname()}:{slot}")
+        player = Player(teamname=agent.teamname(), slot=slot, is_staff_agent=True)
+        self.room_state.players.add(player)
+        self.local_agents[slot] = agent
+        agent.slot = slot
+        agent.room_state = self.room_state
 
-    def get_observer_count(self):
-        return len(
-            [mode for mode in self.client_game_modes.values() if mode == "observer"]
-        )
+    async def run(self) -> dict[Slot, int]:
+        game = Game(self.random, self.room_state, self.room_id)
+        while True:
+            done = await self.tick(game)
+            if done:
+                for _, writer in self.streams.values():
+                    writer.close()
+                return game.game_state.scores
 
-    def broadcast_waiting_room(self):
-        """Broadcast waiting room data to all clients"""
-        last_update = time.time()
-        while self.running and not self.stop_waiting_room:
-            if (self.clients or self.config.grading_mode) and not self.game_thread:
-                if self.is_full():
-                    logger.info("Room is full")
-                    self.start_game()
-                    continue
+    async def tick(self, game: Game) -> bool:
+        slot = game.tick()
+        if len(self.streams) == 0:
+            # all the clients have disconnected
+            return True
+        if slot is None:
+            # the game is done
+            await self.notify_all(False, game.game_state, None)
+            return True
+        await self.notify_all(False, game.game_state, slot)
 
-                current_time = time.time()
-                if (
-                    current_time - last_update >= 1.0 / REFERENCE_TICK_RATE
-                ):  # Limit to TICK_RATE Hz
-                    # Calculate remaining time before adding bots
-                    remaining_time = 0
-                    if self.clients:
-                        # Use the time the first client joined if available, otherwise creation time
-                        start_time = (
-                            self.first_client_join_time
-                            if self.first_client_join_time is not None
-                            else self.room_creation_time
-                        )
-                        elapsed_time = current_time - start_time
-                        remaining_time = max(
-                            0,
-                            self.config.waiting_time_before_bots_seconds
-                            - elapsed_time,
-                        )
-
-                    # If time is up and room is not full, add bots and start the game
-                    if (remaining_time == 0) and not self.game_thread:
-                        logger.info(
-                            f"Waiting time expired for room {self.id}, adding bots and starting game"
-                        )
-                        self.start_game()
-
-                    if self.config.grading_mode:
-                        last_update = current_time
-                        continue
-                    
-                    waiting_room_message = WaitingRoomMessage(
-                        data=WaitingRoomData(
-                            room_id=self.id,
-                            players=list(self.get_players()),
-                            nb_players=self.nb_players_max,
-                            game_started=self.game_thread is not None,
-                            waiting_time=int(remaining_time),
-                        )
+        if slot in self.local_agents:
+            # It's the local agent's turn to move
+            # TODO(alok): should we just call the async version here? And guard against the
+            # local agent taking too long? That would better reflect how things will work at
+            # grading time.
+            if game.should_move(slot):
+                m = self.local_agents[slot].get_move(game.game_state)
+                game.move(slot, m)
+        else:
+            # It's the client's turn to move
+            if game.should_move(slot):
+                move = await self.get_move_from_client(game, slot)
+                game.move(slot, move)
+            else:
+                _, writer = self.streams[slot]
+                game_update_message = Message(
+                    game_update=GameUpdate(
+                        game_state=game.game_state, move_expected=False
                     )
+                )
+                await game_update_message.send(writer)
+        return False
 
-                    state_json = waiting_room_message.to_json()
-                    for client_addr in list(self.clients.keys()):
-                        try:
-                            # Skip AI clients - they don't need network messages
-                            if (
-                                isinstance(client_addr, tuple)
-                                and len(client_addr) == 2
-                                and client_addr[0] == "AI"
-                            ):
-                                continue
-
-                            self.server_socket.sendto(state_json.encode(), client_addr)
-                        except Exception as e:
-                            logger.error(
-                                f"Error sending waiting room data to client: {e}"
-                            )
-
-                    last_update = current_time
-
-            # Sleep for half the period
-            time.sleep(1.0 / (REFERENCE_TICK_RATE * 2))
-            # except Exception as e:
-            #     logger.error(f"Error in broadcast_waiting_room: {e}")
-            #     time.sleep(1.0 / self.config.tick_rate)
-
-    def broadcast_game_state(self):
-        """Thread that periodically sends the game state to clients"""
-        # Send initial state to all clients
-        initial_state_message = InitialStateMessage(
-            data=InitialStateData(
-                game_life_time=self.config.game_duration_seconds,
-                start_time=time.time(),  # Send server start time for synchronization
-            )
+    async def get_move_from_client(self, game: Game, slot: Slot) -> Move:
+        if slot not in self.streams:
+            return Move()
+        reader, writer = self.streams[slot]
+        game_update_message = Message(
+            game_update=GameUpdate(game_state=game.game_state, move_expected=True)
         )
-
-        initial_state_json = initial_state_message.to_json()
-        for client_addr in list(self.clients.keys()):
-            logger.debug(f"Sending initial state to {client_addr}")
-            try:
-                # Skip AI clients - they don't need network messages
-                if (
-                    isinstance(client_addr, tuple)
-                    and len(client_addr) == 2
-                    and client_addr[0] == "AI"
-                ):
-                    continue
-                self.server_socket.sendto(initial_state_json.encode(), client_addr)
-            except Exception as e:
-                logger.error(f"Error sending initial state to client: {e}")
-
-        last_update = time.time()
-        while self.running:
-            try:
-                # Calculate the time elapsed since the last update
-                current_time = time.time()
-                elapsed = current_time - last_update
-
-                # If enough time has passed
-                if elapsed >= 1.0 / REFERENCE_TICK_RATE:
-                    # Get the game state with only the modified data
-                    state = self.game.get_dirty_state()
-                    if state:  # If data has been modified
-                        # Add remaining time to state data only if it has changed significantly (rounded to nearest second)
-                        remaining_seconds = self.config.game_duration_seconds - (self.tick_counter / REFERENCE_TICK_RATE)
-                        current_remaining_time_rounded = round(remaining_seconds)
-                        if self.game.last_remaining_time is None or current_remaining_time_rounded != round(self.game.last_remaining_time):
-                            logger.debug(f"Remaining time changed: {remaining_seconds}")
-                            state["remaining_time"] = remaining_seconds
-                            self.game.last_remaining_time = remaining_seconds
-
-                        # Create the data packet
-                        state_message = StateMessage(data=state)
-
-                        # Send the state to all clients (with optional compression)
-                        state_json = state_message.to_json()
-                        compressed_json = compress_message(state_json)
-                        for client_addr in list(self.clients.keys()):
-                            try:
-                                # Skip AI clients - they don't need network messages
-                                if (
-                                    isinstance(client_addr, tuple)
-                                    and len(client_addr) == 2
-                                    and client_addr[0] == "AI"
-                                ):
-                                    continue
-
-                                self.server_socket.sendto(
-                                    compressed_json.encode(), client_addr
-                                )
-                            except Exception as e:
-                                logger.error(f"Error sending state to client: {e}")
-
-                    last_update = current_time
-
-                # Wait a bit to avoid overloading the CPU
-                time.sleep(1.0 / (REFERENCE_TICK_RATE * 2))
-            except Exception as e:
-                logger.error(f"Error in broadcast_game_state: {e}")
-                time.sleep(1.0 / REFERENCE_TICK_RATE)
-
-    def fill_with_bots(self, nb_bots_needed):
-        """Fill the room with bots and start the game"""
-        if nb_bots_needed <= 0:
-            return
-
-        logger.debug(f"Adding {nb_bots_needed} bots to room {self.id} (seed: {self.bot_seed})")
-
-        # Check if agents list exists and is not empty
-        if not hasattr(self.config, 'agents') or not self.config.agents:
-            logger.error(f"No agents defined in config, cannot add bots to room {self.id}")
-            return
-            
-        # If we need less bots or an equal number to the available list, we pick the bots
-        # randomly (without repetition).
-        # If we need more, we pick each one at least once.
-        agents = self.config.agents[:]
-        
-        # Use the room's seeded random generator instead of the global one
-        # for deterministic bot selection
-        self.random.shuffle(agents)
-        while len(agents) < nb_bots_needed:
-            agents.append(self.random.choice(self.config.agents))
-        agents = agents[:nb_bots_needed]
-
-        for agent in agents:
-            ai_nickname = self.get_available_ai_name(agent)
-            ai_agent_file_name = agent.agent_file_name
-            self.add_ai(ai_nickname=ai_nickname, ai_agent_file_name=ai_agent_file_name)
-
-    def get_available_ai_name(self, agent):
-        """Get an available AI name that is not already in use"""
-        ai_nickname = agent.nickname
-
-        if ai_nickname is None or ai_nickname == "":
-            for name in self.AI_NAMES:
-                if name not in self.used_ai_names:
-                    self.used_ai_names.add(name)
-                    return name
-
-            # If all names are used, create a generic name with a random number
-            logger.debug("All AI names are used, creating a generic name")
-            ai_nickname = f"Bot {random.randint(1000, 9999)}"
-            self.used_ai_names.add(ai_nickname)
-
-        # If the nickname is already used, generate a new one
-        while ai_nickname in self.used_nicknames:
-            r = random.randint(1, 999)
-            ai_nickname = f"{ai_nickname}-{r}"
-
-        self.used_nicknames.add(ai_nickname)
-
-        return ai_nickname
-
-    def add_student_ai(self, ai_nickname=None, ai_agent_file_name=None, agent_dir="common.agents_to_evaluate"):
-        self.student_nickname = ai_nickname
-        self.add_ai(ai_nickname, ai_agent_file_name, agent_dir)
-
-    def add_ai(self, ai_nickname=None, ai_agent_file_name=None, agent_dir="common.agents"):
-        """Create an AI client to control a train"""
-
-        # Creating a new AI train (not replacing an existing one)
-        # logger.debug(f"Creating new AI train with name {ai_nickname}")
-
-        # Add the train to the game
-        if self.game.add_train(ai_nickname):
-            # Import the AI agent from the config path
-            # logger.debug(
-            #     f"Creating AI client {ai_nickname} using agent from {ai_agent_file_name}"
-            # )
-
-            self.ai_clients[ai_nickname] = AIClient(
-                self, ai_nickname, ai_agent_file_name=ai_agent_file_name, agent_dir=agent_dir
+        await game_update_message.send(writer)
+        if self.room_state.room_choice.slow:
+            response = await Message.recv(reader)
+            if response is None:
+                # Free up resources if we can't communicate with this player
+                writer.close()
+                del self.streams[slot]
+                logger.debug(f"#{self.room_id} {slot} has disconnected")
+                return Move()
+            if response.move is None:
+                return Move()
+            if response.move.tick == game.game_state.tick:
+                return response.move.move
+            # TODO(alok): in the slow case, this could be an assert.
+            # There shouldn't be any sync issues
+            logger.info(
+                f"#{self.room_id} ignoring move, arrived too late (should never happen): {response.move.tick} vs {game.game_state.tick}"
             )
+            return Move()
 
-            # Add the ai_client to the game
-            self.game.ai_clients[ai_nickname] = self.ai_clients[ai_nickname]
-
-            # logger.debug(f"Added new AI train {ai_nickname} to room {self.id}")
-            return ai_nickname
-        else:
-            logger.error(f"Failed to add new AI train {ai_nickname} to game")
-            return None
-
-    def replace_player_by_ai(self, train_nickname_to_replace):
-        # Check if there's already an AI controlling this train
-        if train_nickname_to_replace in self.ai_clients:
-            logger.warning(f"AI already exists for train {train_nickname_to_replace}")
-            return
-
-        # logger.debug(f"Creating AI client for train {train_nickname_to_replace}")
-
-        # Change the train's name in the game
-        if train_nickname_to_replace in self.game.trains:
-            # Get a random agent from config
-            agent = random.choice(self.config.agents)
-            ai_nickname = self.get_available_ai_name(agent)
-            ai_agent_file_name = agent.agent_file_name
-            is_dead = not self.game.trains[train_nickname_to_replace].alive
-
-            # Save the train's color
-            if train_nickname_to_replace in self.game.train_colors:
-                train_color = self.game.train_colors[train_nickname_to_replace]
-                self.game.train_colors[ai_nickname] = train_color
-                del self.game.train_colors[train_nickname_to_replace]
-
-            # Get the train object
-            train = self.game.trains[train_nickname_to_replace]
-
-            # Update the train's name
-            train.nickname = ai_nickname
-
-            # Move the train to the new key in the dictionary
-            self.game.trains[ai_nickname] = train
-            del self.game.trains[train_nickname_to_replace]
+        try:
+            response = await asyncio.wait_for(
+                Message.recv(reader),
+                timeout=self.config.max_client_latency_seconds,
+            )
+            if response is None:
+                # Free up resources if we can't communicate with this player
+                writer.close()
+                del self.streams[slot]
+                logger.debug(f"#{self.room_id} {slot} has disconnected")
+                return Move()
+            if response.move is None:
+                return Move()
+            if response.move.tick == game.game_state.tick:
+                return response.move.move
             logger.debug(
-                f"Moved train {train_nickname_to_replace} to {ai_nickname} in game"
+                f"#{self.room_id} ignoring move, arrived too late: {response.move.tick} vs {game.game_state.tick}"
             )
+            return Move()
+        except TimeoutError:
+            logger.debug(f"#{self.room_id}: recv timed out")
+            return Move()
 
-            # Notify clients about the train rename
-            rename_message = StateMessage(
-                data={"rename_train": [train_nickname_to_replace, ai_nickname]}
-            )
+    @staticmethod
+    def load_map(config: ServerConfig, random: random.Random, name: str | None) -> Map:
+        if name is None:
+            name = random.choice(list(config.maps.keys()))
+        path = config.maps[name]
 
-            state_json = rename_message.to_json()
-            # Iterate over a copy of the client addresses to avoid issues if the list changes
-            # Only send to non-AI clients
-            for client_addr in list(self.clients.keys()):
-                # Ensure it's a real client address tuple (IP, port), not an AI marker
-                if (
-                    isinstance(client_addr, tuple)
-                    and len(client_addr) == 2
-                    and isinstance(client_addr[1], int)
-                ):
-                    try:
-                        self.server_socket.sendto(state_json.encode(), client_addr)
-                    except Exception as e:
-                        # Log error but continue trying other clients
-                        logger.error(
-                            f"Error sending train rename notification to client {client_addr}: {e}"
-                        )
-            # link to common/agents/
-            agent_dir = "common.agents"
-
-            # Create the AI client with the new name
-            self.ai_clients[ai_nickname] = AIClient(
-                self, ai_nickname, ai_agent_file_name, is_dead, is_dead, agent_dir
-            )
-
-            # Add the AI client to the game
-            self.game.ai_clients[ai_nickname] = self.ai_clients[ai_nickname]
-
-            # Prepare the game state to send to clients
-            state = self.game.get_state()
-
-            # Create the data packet
-            state_message = StateMessage(data=state)
-
-            self.ai_clients[ai_nickname].update_state(state_message.model_dump())
-
-        else:
-            logger.warning(
-                f"Train {train_nickname_to_replace} not found in game, cannot create AI client"
-            )
-
-    def add_all_trains(self):
-        # Add trains for all the players
-        for nickname in self.get_players():
-            # Find the client address for this nickname
-            client_addr = None
-            for addr, name in self.clients.items():
-                if name == nickname:
-                    client_addr = addr
-                    break
-
-            if client_addr is None:
-                logger.warning(f"Could not find address for player {nickname}")
-                continue
-
-            if self.game.add_train(nickname):
-                response = SpawnSuccessMessage(nickname=nickname)
-                self.server_socket.sendto(
-                    response.to_json().encode(), client_addr
-                )
-            else:
-                logger.warning(f"Failed to spawn train {nickname}")
-                # Inform the client of the failure
-                response = RespawnFailedMessage(message="Failed to spawn train")
-                self.server_socket.sendto(
-                    response.to_json().encode(), client_addr
-                )
+        available_cells: set[Pos] = set()
+        delivery_zones: dict[Pos, Dest] = {}
+        width = 0
+        height = 0
+        with open(path, "r") as f:
+            # figure out the grid size
+            for j, line in enumerate(f):
+                height = j
+                for i, c in enumerate(line.rstrip()):
+                    width = max(width, i)
+                    if c == "#":
+                        continue
+                    available_cells.add((i, j))
+                    if c != ".":
+                        delivery_zones[(i, j)] = c
+        return Map(
+            name=name,
+            width=width + 1,
+            height=height + 1,
+            available_cells=available_cells,
+            delivery_zones=delivery_zones,
+        )
