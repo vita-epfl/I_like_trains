@@ -1,4 +1,5 @@
 {
     "python.analysis.typeCheckingMode": "strict",
     "editor.formatOnSave": true,
+    "files.encoding": "utf8"
 }
