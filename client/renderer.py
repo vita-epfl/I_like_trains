@@ -46,7 +46,7 @@ BACKGROUND_COLOR = pygame.Color("white")
 TEXT_COLOR = pygame.Color("black")
 GRASS_COLOR = pygame.Color("#0B640B")  # dark green
 OUR_COLOR = pygame.Color("#FF0000")
-ROAD_COLOR = pygame.Color("#4F4F4F")  # dark gray
+ROAD_COLOR = pygame.Color("#D4D4D4")  # dark gray
 STAFF_BADGE_COLOR = pygame.Color("#a8930b")  # gold
 
 
