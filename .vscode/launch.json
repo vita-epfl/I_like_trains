@@ -25,10 +25,11 @@
                 "discover",
                 "-v",
                 "-p",
-                "*_test.py"
+                "*_test.py",
                 // uncomment to run a specific unittest
-                // "-k", "server.game_test.TestGame"
-                // "-k", "common.state_test.TestStateSerialization
+                // "-k", "TestGame",
+                // "-k", "TestRoom",
+                // "-k", "TestStateSerialization",
             ]
         },
     ]
