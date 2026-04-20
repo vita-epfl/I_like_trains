@@ -132,4 +132,8 @@ class Client:
                     # filling the logs.
                     logger.error("get_move() timed out, your agent is too slow!")
                 return Move()
+            except Exception as e:
+                logger.exception(e)
+                logger.error("Agent raised an exception")
+                return Move()
         return Move()
