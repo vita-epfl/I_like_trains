@@ -11,11 +11,11 @@ from server.room import Room
 class TestRoom(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         config = ServerConfig(room_max_wait_game_start_seconds=0.5)
-        config.maps["test"] = "maps/map_test.txt"
         config.agents["test"] = "agent.py"
         config.seed = 1234
         self.room_choice = RoomChoice(total_players=2, min_staff_agents=0)
-        self.room = Room(1, config, self.room_choice)
+        maps = {"test": Room.load_map("test", "maps/map_test.txt")}
+        self.room = Room(1, config, self.room_choice, maps)
 
     async def test_joining_room(self):
         # There's space for the first player

@@ -10,7 +10,7 @@ from urllib.error import URLError
 
 from common.config import Config
 from common.messages import JoinRequest, Message
-from common.state import RoomChoice
+from common.state import Map, RoomChoice
 from server.room import Room
 
 logger = logging.getLogger("server")
@@ -24,6 +24,11 @@ class Server:
         self.config = config.server
         logger.debug(self.config)
         self.verify_agent_files()
+
+        # Load all the maps so we can share the map between rooms
+        self.maps: dict[str, Map] = {}
+        for map_name, map_path in self.config.maps.items():
+            self.maps[map_name] = Room.load_map(map_name, map_path)
 
         # Rooms which are either running or waiting to be filled up
         self.latest_rooms: dict[RoomChoice, Room] = {}
@@ -107,9 +112,7 @@ class Server:
         if room is None:
             # Create a new room
             room = Room(
-                self.next_room_id,
-                self.config,
-                join_request.room_choice,
+                self.next_room_id, self.config, join_request.room_choice, self.maps
             )
             self.next_room_id += 1
             self.latest_rooms[join_request.room_choice] = room

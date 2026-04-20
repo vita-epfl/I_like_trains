@@ -41,6 +41,7 @@ class Room:
         room_id: int,
         config: ServerConfig,
         room_choice: RoomChoice,
+        maps: dict[str, Map],
     ) -> None:
         self.room_id = room_id  # for debugging purpose
         self.config = config
@@ -51,6 +52,12 @@ class Room:
             seed = random.randint(1, 9999)
         self.random = random.Random(seed)
         self.created_at = datetime.datetime.now()
+
+        map = None
+        if room_choice.map_choice is not None:
+            map = maps.get(room_choice.map_choice)
+        if map is None:
+            map = random.choice(list(maps.values()))
 
         self.room_state = RoomState(
             players=set(),
@@ -68,7 +75,7 @@ class Room:
             drop_passenger_from_bus_distance=config.drop_passenger_from_bus_distance,
             passenger_values=config.passenger_values,
             passenger_pickup_from_bus_distance=config.passenger_pickup_from_bus_distance,
-            map=Room.load_map(config, self.random, room_choice.map_choice),
+            map=map,
         )
         self.streams: dict[Slot, tuple[StreamReader, StreamWriter]] = {}
         self.local_agents: dict[Slot, BaseAgent] = {}
@@ -250,11 +257,7 @@ class Room:
         return Move()
 
     @staticmethod
-    def load_map(config: ServerConfig, rng: random.Random, name: str | None) -> Map:
-        if name is None:
-            name = rng.choice(list(config.maps.keys()))
-        path = config.maps[name]
-
+    def load_map(name: str, path: str) -> Map:
         available_cells: set[Pos] = set()
         delivery_zones: dict[Pos, Dest] = {}
         width = 0

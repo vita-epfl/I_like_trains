@@ -1,6 +1,5 @@
 import unittest
 import random
-from common.config import ServerConfig
 from common.messages import Dir
 from common.state import Passenger, Player, RoomChoice, RoomState
 from server.game import Game
@@ -10,11 +9,9 @@ from server.room import Room
 class TestGame(unittest.TestCase):
     def setUp(self) -> None:
         self.random = random.Random(1234)
-        config = ServerConfig()
-        config.maps["test"] = "maps/map_test.txt"
         player1 = Player(teamname="p1", slot=0, is_staff_agent=False)
         player2 = Player(teamname="p2", slot=1, is_staff_agent=False)
-        map = Room.load_map(config=config, rng=self.random, name="test")
+        map = Room.load_map("test", "maps/map_test.txt")
         self.room_state = RoomState(
             players={player1, player2},
             room_choice=RoomChoice(),
