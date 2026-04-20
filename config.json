@@ -1,10 +1,12 @@
 {
     "client": {
         "teamname": "incognito",
-        "connect_to": "127.0.0.1",
+        "connect_to": "localhost",
         "agent_filename": "keyboard.py",
-        "total_players": 1,
-        "min_staff_agents": 0
+        "room_choice": {
+            "total_players": 2,
+            "min_staff_agents": 1
+        }
     },
     "server": {
         "localhost_only": true,
