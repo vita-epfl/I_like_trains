@@ -1,16 +1,15 @@
 name: Publish Release
 on:
-  push:
-    branches:
-      - '2026/i_love_buses'
+  workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v6
+      with:
+        ref: '2026/i_love_buses'
     - name: Create a Release
-      uses: elgohr/Github-Release-Action@v5
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        title: i_love_buses
+      run: gh release create "i_love_buses-${{ github.sha }}" --target ${{ github.sha }} --title "i_love_buses" --notes ""
