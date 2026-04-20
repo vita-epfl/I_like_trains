@@ -8,7 +8,7 @@ import pygame
 
 from common.base_agent import KeyEvent
 from common.config import ClientConfig
-from common.state import GameState, RoomState, Slot
+from common.state import GameState, Passenger, RoomState, Slot
 
 # Configure logger
 logger = logging.getLogger("client.renderer")
@@ -233,34 +233,14 @@ class Renderer:
 
             # Draw passengers
             for pos, passenger in self.game_state.passengers.items():
-                c = DESTINATION_COLORS.get(
-                    passenger.destination, OTHER_DESTINATION_COLOR
-                )
-                c_with_alpha = (c[0], c[1], c[2], 10)
                 x, y = pos
-                pygame.draw.circle(
+                self.draw_passenger(
                     surface,
-                    c_with_alpha,
-                    ((x + 0.5) * cell_size, (y + 0.5) * cell_size),
-                    cell_size / 2 - ui_size,
-                )
-                label = self.font.render(str(passenger.value), True, BACKGROUND_COLOR)
-                desired_size = math.sqrt(2) * (cell_size - 2 * ui_size) / 2
-                scale = max(label.width / desired_size, label.height / desired_size)
-                scale = max(scale, 0)
-                resized_label = pygame.transform.smoothscale(
-                    label,
-                    (math.floor(label.width / scale), math.floor(label.height / scale)),
-                )
-                bounding_box = resized_label.get_bounding_rect()
-                surface.blit(
-                    resized_label,
-                    (
-                        (x + 0.5) * cell_size - bounding_box.width / 2 - bounding_box.x,
-                        (y + 0.5) * cell_size
-                        - bounding_box.height / 2
-                        - bounding_box.y,
-                    ),
+                    math.floor((x + 0.5) * cell_size),
+                    math.floor((y + 0.5) * cell_size),
+                    cell_size,
+                    ui_size,
+                    passenger,
                 )
 
             # draw buses
@@ -312,8 +292,55 @@ class Renderer:
                                 4 * ui_size,
                             ),
                         )
+
+            # Draw our passengers
+            assert self.slot is not None
+            x = surface.width - self.padding - cell_size / 2
+            y = surface.height - footer_height - self.padding - cell_size / 2
+            for passenger in self.game_state.buses[self.slot].passengers:
+                c = DESTINATION_COLORS.get(
+                    passenger.destination, OTHER_DESTINATION_COLOR
+                )
+                self.draw_passenger(
+                    surface, math.floor(x), math.floor(y), cell_size, ui_size, passenger
+                )
+                x -= cell_size + self.padding
+
         finally:
             self.window.flip()
+
+    def draw_passenger(
+        self,
+        surface: pygame.Surface,
+        x: int,
+        y: int,
+        cell_size: int,
+        ui_size: int,
+        passenger: Passenger,
+    ) -> None:
+        c = DESTINATION_COLORS.get(passenger.destination, OTHER_DESTINATION_COLOR)
+        pygame.draw.circle(
+            surface,
+            c,
+            (x, y),
+            cell_size / 2 - ui_size,
+        )
+        label = self.font.render(str(passenger.value), True, BACKGROUND_COLOR)
+        desired_size = math.sqrt(2) * (cell_size - 2 * ui_size) / 2
+        scale = max(label.width / desired_size, label.height / desired_size)
+        scale = max(scale, 0)
+        resized_label = pygame.transform.smoothscale(
+            label,
+            (math.floor(label.width / scale), math.floor(label.height / scale)),
+        )
+        bounding_box = resized_label.get_bounding_rect()
+        surface.blit(
+            resized_label,
+            (
+                x - bounding_box.width / 2 - bounding_box.x,
+                y - bounding_box.height / 2 - bounding_box.y,
+            ),
+        )
 
     def get_footer(self) -> str:
         """
