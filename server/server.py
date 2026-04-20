@@ -42,7 +42,7 @@ class Server:
                             scores TEXT)""")
 
     async def run(self):
-        host = "127.0.0.1"
+        host = "localhost"
         if not self.config.localhost_only:
             host = "0.0.0.0"
             logger.info(
