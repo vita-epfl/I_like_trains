@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 import logging
 
 from common.base_agent import AgentWithKey
@@ -16,6 +17,10 @@ class Agent(AgentWithKey):
     - <esc> to drop off all your passengers
     """
 
+    def setup(self):
+        super().setup()
+        self.last_move = None
+
     async def async_get_move(self, game_state: GameState) -> Move:
         """
         The keyboard agent needs to use async_get_move() because
@@ -24,7 +29,13 @@ class Agent(AgentWithKey):
         # Slow things down so that we don't crash into a wall as soon
         # as we press a key. The alternative would be to only move
         # one cell per key press, but that feels weird.
-        await asyncio.sleep(1 / 60)
+        t = datetime.now().timestamp()
+        if self.last_move is not None:
+            time_slice = 0.05 - (t - self.last_move)
+            if time_slice > 0:
+                await asyncio.sleep(time_slice)
+        self.last_move = t
+
         n = 0
         while True:
             n += 1
