@@ -138,7 +138,7 @@ class ServerConfig(BaseModel):
     drop_passenger_from_bus_distance: int = 3
 
     # Possible values for passengers
-    passenger_values: set[int] = {1, 2, 4, 8, 16}
+    passenger_values: set[int] = {10, 15, 20, 25, 30}
 
     # How close the front of the bus needs to be to pick up a passenger
     passenger_pickup_from_bus_distance: int = 1
