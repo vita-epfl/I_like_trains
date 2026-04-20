@@ -22,10 +22,13 @@
             "request": "launch",
             "module": "unittest",
             "args": [
-                "-v"
+                "discover",
+                "-v",
+                "-p",
+                "*_test.py"
                 // uncomment to run a specific unittest
-                // "server.test_game.TestGame"
-                // "common.test_state.TestStateSerialization
+                // "-k", "server.game_test.TestGame"
+                // "-k", "common.state_test.TestStateSerialization
             ]
         },
     ]
