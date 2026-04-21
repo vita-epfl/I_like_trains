@@ -20,11 +20,11 @@ logging.basicConfig(
 )
 
 # Load the config file
-config_file: str = "config.json"
+config_file = "config.json"
 if len(sys.argv) > 1:
     config_file = sys.argv[1]
-config: Config = Config.load(config_file)
+config = Config.load(config_file)
 
 # Create the client, agent, and start the client
-client: Client = Client(config)
+client = Client(config)
 asyncio.run(client.run())

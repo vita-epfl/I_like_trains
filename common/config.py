@@ -6,50 +6,6 @@ from pydantic import BaseModel, Field, ValidationError
 from common.state import RoomChoice
 
 
-class Config(BaseModel):
-    """
-    Load config.json (or whatever filename was passed on the command line)
-
-    The json config file is mapped to this object. As a result:
-    - it is clear which fields can appear in the config file
-    - the purpose of each field is properly documented
-    - there's an efficient way to handle default values
-    - there's a single Config object that gets passed around the codebase
-    """
-
-    client: ClientConfig
-    server: ServerConfig
-    loggers: dict[str, str] = {}  # logger to log level mapping
-
-    @staticmethod
-    def load(filename: str) -> Config:
-        """
-        Loads a JSON config file and returns an instance of Config.
-        """
-
-        try:
-            with open(filename, "r") as f:
-                config = Config.model_validate_json("".join(f))
-                for logger, level in config.loggers.items():
-                    log = logging.getLogger(logger)
-                    log.setLevel(level)
-                return config
-        except ValidationError as e:
-            print(f"Failed to parse {filename}, check your changes.", file=sys.stderr)
-            raise e
-        except FileNotFoundError as e:
-            print(
-                f"\nError: Configuration file '{filename}' not found.\n\n"
-                f"Please copy the template file to create your config:\n"
-                f"  - On Linux/MacOS/Unix: cp config.json.template config.json\n"
-                f"  - On Windows (Command Prompt): copy config.json.template config.json\n"
-                f"  - On Windows (PowerShell): Copy-Item -Path config.json.template -Destination config.json\n\n"
-                f"See the README.md for more details.\n",
-                file=sys.stderr,
-            )
-            raise e
-
-
 class ClientConfig(BaseModel):
     # Host we want to connect to. Use 127.0.0.1 if you want to connect to your local machine.
     connect_to: str = "127.0.0.1"
@@ -60,7 +16,7 @@ class ClientConfig(BaseModel):
     teamname: str = "incognito"
 
     # Where your code is located.
-    agent_filename: str = Field(..., min_length=1)
+    agent_filename: str = "agent.py"
 
     # If agent_timeout_seconds is set, the client code will
     # respond with an empty move if agent_timeout_seconds has
@@ -75,10 +31,10 @@ class ClientConfig(BaseModel):
     room_choice: RoomChoice = RoomChoice()
 
     # How many players in total the room should have
-    total_players: int = Field(2, ge=1, le=16)
+    total_players: int = Field(default=2, ge=1, le=16)
 
     # Minimum number of staff agents you want to play against
-    min_staff_agents: int = Field(0, ge=0, le=15)
+    min_staff_agents: int = Field(default=0, ge=0, le=15)
 
     # UI stuff
     window_width: int = 800
@@ -145,3 +101,88 @@ class ServerConfig(BaseModel):
 
     # If set, stores results to a sqlite database
     results_database: None | str = None
+
+
+class GradingConfig(BaseModel):
+    # How many iterations to perform for each combination of
+    # number of players * map * agent being graded
+    iterations: int = 10
+
+    # Seed used to ensure each agent is graded the same way. The grading seed
+    # is used to deterministically generate per-run seeds.
+    seed: int = 1000
+
+    # Agents to grade. Files are loaded from grading/agents.
+    agents_to_grade: dict[str, str] = {}
+
+    # Staff agents which can be used to fill rooms. Files are loaded from
+    # common/agents (same as ServerConfig.agents).
+    staff_agents: dict[str, str] = {}
+    min_staff_agents: int = 0
+    max_staff_agents: int = 3
+
+    # Path to the csv file where results are appended.
+    output_file: str = "grading_results.csv"
+
+    # How long to allow an agent to respond. An empty move is used when the
+    # timeout fires.
+    agent_timeout_seconds: float = 0.150
+
+    # The following fields mirror the corresponding ServerConfig fields and
+    # are used when building the room and the game.
+    game_duration_ticks: int = 7200
+    desired_passengers: int = 10
+    respawn_ticks: int = 300
+    bus_min_length: int = 2
+    bus_max_length: int = 5
+    max_passengers: int = 4
+    maps: dict[str, str] = {}
+    spawn_passenger_away_from_bus_distance: int = 3
+    drop_passenger_from_bus_distance: int = 3
+    passenger_values: set[int] = {10, 15, 20, 25, 30}
+    passenger_pickup_from_bus_distance: int = 1
+
+
+class Config(BaseModel):
+    """
+    Load config.json (or whatever filename was passed on the command line)
+
+    The json config file is mapped to this object. As a result:
+    - it is clear which fields can appear in the config file
+    - the purpose of each field is properly documented
+    - there's an efficient way to handle default values
+    - there's a single Config object that gets passed around the codebase
+    """
+
+    client: ClientConfig = ClientConfig()
+    server: ServerConfig = ServerConfig()
+    grading: GradingConfig = GradingConfig()
+    loggers: dict[str, str] = {}  # logger to log level mapping
+
+    @staticmethod
+    def load(filename: str) -> Config:
+        """
+        Loads a JSON config file and returns an instance of Config.
+        """
+
+        try:
+            with open(filename, "r") as f:
+                config = Config.model_validate_json("".join(f))
+                for logger, level in config.loggers.items():
+                    log = logging.getLogger(logger)
+                    log.setLevel(level)
+                return config
+        except ValidationError as e:
+            print(f"Failed to parse {filename}, check your changes.", file=sys.stderr)
+            raise e
+        except FileNotFoundError as e:
+            print(
+                f"\nError: Configuration file '{filename}' not found.\n\n"
+                f"Please copy the template file to create your config:\n"
+                f"  - On Linux/MacOS/Unix: cp config.json.template config.json\n"
+                f"  - On Windows (Command Prompt): copy config.json.template config.json\n"
+                f"  - On Windows (PowerShell): Copy-Item -Path config.json.template -Destination config.json\n\n"
+                f"See the README.md for more details.\n",
+                file=sys.stderr,
+            )
+            raise e
