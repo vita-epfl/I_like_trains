@@ -76,7 +76,7 @@
     },
     "loggers": {
         "server.game": "INFO",
-        "agent": "DEBUG",
+        "agent": "INFO",
         "grading": "ERROR",
         "asyncio": "ERROR"
     }

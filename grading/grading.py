@@ -136,6 +136,13 @@ async def _run_async(
     )
 
 
+def _teamname(agent: BaseAgent) -> str:
+    for player in agent.room_state.players:
+        if player.slot == agent.slot:
+            return player.teamname
+    return "?"
+
+
 async def _get_move(
     agent: BaseAgent, game_state: GameState, timeout_seconds: float
 ) -> Move:
@@ -154,9 +161,13 @@ async def _get_move(
             agent.async_get_move(game_state_copy), timeout_seconds
         )
     except TimeoutError:
-        logger.warning(f"slot {agent.slot} timed out on tick {game_state.tick}")
+        logger.warning(
+            f"slot {agent.slot} ({_teamname(agent)}) timed out on tick {game_state.tick}"
+        )
     except Exception as e:
-        logger.warning(f"slot {agent.slot} raised: {e}")
+        logger.warning(
+            f"slot {agent.slot} ({_teamname(agent)}) raised: {e}", exc_info=True
+        )
     # gc.enable()
     return move
 
@@ -168,7 +179,7 @@ def _worker_init(loggers: dict[str, str]) -> None:
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.StreamHandler()],
+        handlers=[logging.FileHandler("grading.log", mode="a")],
     )
     for logger_name, level in loggers.items():
         log = logging.getLogger(logger_name)
