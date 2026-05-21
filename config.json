@@ -21,5 +21,63 @@
             "heart": "maps/map_heart.txt",
             "regular": "maps/map_regular.txt"
         }
+    },
+    "grading": {
+        "iterations": 1,
+        "seed": 2026,
+        "agents_to_grade": {
+            "1": "1.agent.py",
+            "2": "2.agent.py",
+            "3": "3.agent.py",
+            "4": "4.agent.py",
+            "5": "5.agent.py",
+            "6": "6.agent.py",
+            "7": "7.Agent_4.0.py",
+            "8": "8.agent.py",
+            "9": "9.agent.py",
+            "10": "10.agent_v16.py",
+            "11": "11.agent.py",
+            "12": "12.agent.py",
+            "13": "13.agent.py",
+            "14": "14.agent.py",
+            "15": "15.agent.py",
+            "16": "16.agent.py",
+            "17": "17.agent_LeoDomine_G17.py",
+            "19": "19.agent.py",
+            "20": "20.agent.py",
+            "21": "21.agent.py",
+            "22": "22.agent.py",
+            "23": "23.agent.py",
+            "24": "24.agent.py",
+            "25": "25.agent.py",
+            "26": "26.agent.py",
+            "28": "28.agent.py",
+            "29": "29.agent.py",
+            "33": "33.agent.py",
+            "34": "34.agent.py",
+            "35": "35.agent.py",
+            "36": "36.agent.py",
+            "37": "37.agent.py",
+            "39": "39.agent.py",
+            "40": "40.agent.py"
+        },
+        "staff_agents": {},
+        "min_staff_agents": 0,
+        "max_staff_agents": 0,
+        "maps": {
+            "civil": "maps/map_civil.txt",
+            "epfl": "maps/map_epfl.txt",
+            "irregular": "maps/map_irregular.txt",
+            "corridors": "maps/map_corridors.txt",
+            "heart": "maps/map_heart.txt",
+            "regular": "maps/map_regular.txt"
+        },
+        "output_file": "/results/grading.csv"
+    },
+    "loggers": {
+        "server.game": "INFO",
+        "agent": "DEBUG",
+        "grading": "ERROR",
+        "asyncio": "ERROR"
     }
 }

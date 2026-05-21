@@ -1,0 +1,13 @@
+/.github
+/.ruff_cache
+/.venv
+/.vscode
+/client
+/competition
+/htmlcov
+/img
+/.coverage
+/.gitignore
+/.python-version
+/README.md
+**/__pycache__

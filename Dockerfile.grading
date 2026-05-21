@@ -1,0 +1,34 @@
+# Build with:
+# docker build -t grading -f Dockerfile.grading .
+#
+# Run with:
+# docker run --rm -it --entrypoint bash -v `pwd`/results:/results grading
+
+FROM python:3.14.2-slim
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /app
+
+COPY common ./common
+COPY grading ./grading
+COPY maps ./maps
+COPY server ./server
+COPY pyproject.toml uv.lock .
+
+RUN uv venv --python 3.14.2 && \
+    uv sync && \
+    apt-get update && \
+    apt-get install -y zip rename
+
+COPY unzip.sh .
+RUN chmod a+x unzip.sh
+
+WORKDIR /app/grading/agents
+RUN /app/unzip.sh
+
+WORKDIR /app
+COPY config.json .
+
+VOLUME /results
+
+ENTRYPOINT ["/bin/bash", "-c", "source ./.venv/bin/activate"]
