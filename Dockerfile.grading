@@ -1,8 +1,12 @@
-# Build with:
-# docker build -t grading -f Dockerfile.grading .
+# Building instructions:
 #
-# Run with:
-# docker run --rm -it --entrypoint bash -v `pwd`/results:/results grading
+# - copy the zip file with all the students' code to students.zip
+#   (this zip file will get extracted inside the container at build time)
+# - build the image with:
+#   docker build -t grading -f Dockerfile.grading .
+#
+# - run the image with:
+#   docker run --rm -it -v `pwd`/results:/app/results grading
 
 FROM python:3.14.2-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -16,20 +20,17 @@ RUN uv venv --python 3.14.2 && \
     apt-get install -y zip rename
 
 # unzip
+COPY students.zip .
 COPY grading ./grading
 COPY unzip.sh .
-RUN chmod a+x unzip.sh
-WORKDIR /app/grading/agents
-RUN /app/unzip.sh
+RUN ./unzip.sh
 
 # setup code
-WORKDIR /app
 COPY common ./common
 COPY maps ./maps
 COPY server ./server
-
 COPY config.json .
 
-VOLUME /results
+VOLUME /app/results
 
-ENTRYPOINT ["/bin/bash", "-c", "source ./.venv/bin/activate"]
+ENTRYPOINT ["/bin/bash", "-c", "source ./.venv/bin/activate && python -m grading"]

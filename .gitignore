@@ -1,5 +1,7 @@
+staff_*
 __pycache__
-.venv
-common/agents/staff_*
-common/agents/agents_to_evaluate/
-.coverage
+/.venv
+/.coverage
+/students.zip
+/results/grading.csv
+/results/grading.log

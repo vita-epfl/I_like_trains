@@ -7,7 +7,7 @@ from grading.grading import Grade
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("grading.log", mode="w")],
+    handlers=[logging.FileHandler("results/grading.log", mode="w")],
 )
 
 # Load the config file

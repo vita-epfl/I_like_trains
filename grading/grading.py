@@ -3,15 +3,17 @@ import datetime
 import importlib
 import logging
 import math
+import multiprocessing as mp
 import random
-import threading
+import traceback
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from multiprocessing.connection import Connection
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 import tqdm
 
 from pydantic import BaseModel
 
-from common.base_agent import BaseAgent
 from common.config import GradingConfig
 from common.messages import Move
 from common.state import GameState, Player, RoomChoice, RoomState, Slot
@@ -36,6 +38,9 @@ class RunResult(BaseModel):
     # agent's score when running alone, agent's position otherwise
     score: int
     run_time_seconds: float
+    # True if the graded agent ever failed to return a move in time and was
+    # killed (it forfeits all remaining moves once this happens).
+    timed_out: bool = False
 
 
 # TODO(alok): copy-pasta
@@ -95,23 +100,32 @@ def _run(
 
     # Construct agents only after the Player set is finalized so each agent
     # sees a complete snapshot of the room, including its own Player entry.
-    agents: dict[Slot, BaseAgent] = {}
+    # Each agent runs in its own subprocess so a get_move that never returns
+    # can be hard-killed; the process boundary also isolates the agent from
+    # the authoritative game state (it only ever sees a pickled copy).
+    teamnames = {player.slot: player.teamname for player in room_state.players}
+    agents: dict[Slot, AgentProcess] = {}
     for slot, (base, file) in slot_to_module_name.items():
-        module = _load_agent_module(base, file)
-        agents[slot] = module.Agent(room_state.model_copy(deep=True), slot)
+        agents[slot] = AgentProcess(
+            base, file, room_state, slot, teamnames[slot], _loggers
+        )
 
     game = Game(rng, room_state, 1)
 
     start = datetime.datetime.now()
-    while True:
-        slot = game.tick()
-        if slot is None:
-            break
-        if not game.bus_is_alive(slot):
-            continue
-        agent = agents[slot]
-        move = _get_move(agent, game.game_state, config.agent_timeout_seconds)
-        game.move(slot, move)
+    try:
+        while True:
+            slot = game.tick()
+            if slot is None:
+                break
+            if not game.bus_is_alive(slot):
+                continue
+            move = agents[slot].get_move(game.game_state, config.agent_timeout_seconds)
+            game.move(slot, move)
+        timed_out = agents[grading_slot].timed_out
+    finally:
+        for agent in agents.values():
+            agent.close()
     end = datetime.datetime.now()
 
     scores = game.game_state.scores
@@ -133,70 +147,174 @@ def _run(
         seed=seed,
         score=metric,
         run_time_seconds=(end - start).total_seconds(),
+        timed_out=timed_out,
     )
 
 
-def _teamname(agent: BaseAgent) -> str:
-    for player in agent.room_state.players:
-        if player.slot == agent.slot:
-            return player.teamname
-    return "?"
+def _agent_worker(
+    base: str,
+    file: str,
+    room_state: RoomState,
+    slot: Slot,
+    conn: Connection,
+    loggers: dict[str, str],
+) -> None:
+    """Child-process entry point: build the agent once, then serve get_move
+    requests over the pipe until the parent closes it (or kills us)."""
+    # Wire this fresh process up to the grading log so the agent's own log
+    # output is captured (with timestamps) instead of leaking to the console.
+    _configure_logging(loggers)
+    agent = None
+    init_error: str | None = None
+    try:
+        module = _load_agent_module(base, file)
+        agent = module.Agent(room_state, slot)
+    except Exception:
+        init_error = traceback.format_exc()
 
+    # Signal readiness so the parent can pay interpreter-startup and agent
+    # construction cost up front, keeping it out of the per-move timeout.
+    conn.send(("ready", None))
 
-def _get_move(
-    agent: BaseAgent, game_state: GameState, timeout_seconds: float
-) -> Move:
-    # The agent is given a deep copy of GameState so that mutations inside
-    # get_move can't corrupt the authoritative state held by the Game.
-    game_state_copy = game_state.model_copy(deep=True)
-
-    # get_move runs in a daemon thread so we can enforce a hard wall-clock
-    # timeout even when the agent does blocking, CPU-bound work: asyncio's
-    # wait_for can only cancel at an await point, so it cannot interrupt a
-    # synchronous get_move. Python has no safe way to kill a thread, so on
-    # timeout we abandon it (it keeps running until get_move returns on its
-    # own) and fall back to an empty Move. daemon=True keeps an abandoned
-    # thread from blocking process exit.
-    captured_move: Move | None = None
-    captured_error: Exception | None = None
-
-    def run() -> None:
-        nonlocal captured_move, captured_error
+    while True:
         try:
-            captured_move = agent.get_move(game_state_copy)
-        except Exception as e:
-            captured_error = e
+            game_state = conn.recv()
+        except EOFError:
+            return
+        if init_error is not None:
+            conn.send(("error", init_error))
+            continue
+        assert agent is not None
+        try:
+            conn.send(("move", agent.get_move(game_state)))
+        except Exception:
+            conn.send(("error", traceback.format_exc()))
 
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    thread.join(timeout_seconds)
 
-    if thread.is_alive():
-        logger.warning(
-            f"slot {agent.slot} ({_teamname(agent)}) timed out on tick {game_state.tick}"
+class AgentProcess:
+    """Runs a single agent in its own subprocess so a get_move that never
+    returns can be hard-killed. The first time the agent fails to answer in
+    time (or its process dies) we terminate it and mark it timed-out: every
+    subsequent get_move short-circuits to an empty Move without touching the
+    process. Agent exceptions come back over the pipe and are recoverable —
+    they don't disqualify the agent. The agent only ever sees a pickled copy
+    of the game state."""
+
+    # How long to wait for a freshly spawned child to build its agent.
+    _STARTUP_TIMEOUT = 30.0
+
+    def __init__(
+        self,
+        base: str,
+        file: str,
+        room_state: RoomState,
+        slot: Slot,
+        teamname: str,
+        loggers: dict[str, str],
+    ) -> None:
+        self.slot = slot
+        self.teamname = teamname
+        self.timed_out = False
+        # Use a fresh context so we don't depend on the pool's start method.
+        self._ctx = mp.get_context("spawn")
+        parent_conn, child_conn = self._ctx.Pipe()
+        self._proc: BaseProcess | None = self._ctx.Process(
+            target=_agent_worker,
+            args=(base, file, room_state, slot, child_conn, loggers),
+            daemon=True,
         )
-        return Move()
-    if captured_error is not None:
-        logger.warning(
-            f"slot {agent.slot} ({_teamname(agent)}) raised: {captured_error}",
-            exc_info=captured_error,
-        )
-        return Move()
-    return captured_move if captured_move is not None else Move()
+        self._conn: Connection | None = parent_conn
+        self._proc.start()
+        # Only the child needs its end; closing ours here lets recv raise
+        # EOFError promptly if the child dies.
+        child_conn.close()
+
+        # Block until the agent is constructed so interpreter startup and
+        # agent setup don't eat into the per-move timeout on the first tick.
+        try:
+            if parent_conn.poll(self._STARTUP_TIMEOUT):
+                parent_conn.recv()  # ("ready", None)
+            else:
+                logger.warning(
+                    f"slot {slot} ({teamname}) failed to start within "
+                    f"{self._STARTUP_TIMEOUT}s"
+                )
+                self._kill()
+        except EOFError, OSError:
+            logger.warning(f"slot {slot} ({teamname}) died during startup")
+            self._kill()
+
+    def get_move(self, game_state: GameState, timeout_seconds: float) -> Move:
+        # Once an agent has timed out (or its process is gone) it forfeits all
+        # remaining moves; never spend time talking to a dead/runaway process.
+        if self.timed_out or self._conn is None:
+            return Move()
+        try:
+            self._conn.send(game_state)
+            if not self._conn.poll(timeout_seconds):
+                logger.warning(
+                    f"slot {self.slot} ({self.teamname}) timed out on tick "
+                    f"{game_state.tick}; forfeiting remaining moves"
+                )
+                self._kill()
+                return Move()
+            kind, payload = self._conn.recv()
+        except EOFError, OSError:
+            logger.warning(
+                f"slot {self.slot} ({self.teamname}) process died on tick "
+                f"{game_state.tick}; forfeiting remaining moves"
+            )
+            self._kill()
+            return Move()
+
+        if kind == "error":
+            # The agent raised but its process is healthy; log and let it keep
+            # playing (this tick is a no-op).
+            logger.warning(f"slot {self.slot} ({self.teamname}) raised:\n{payload}")
+            return Move()
+        return payload
+
+    def _kill(self) -> None:
+        """Terminate the child and mark the agent as timed-out."""
+        self.timed_out = True
+        self.close()
+
+    def close(self) -> None:
+        if self._proc is not None:
+            self._proc.terminate()
+            self._proc.join(timeout=1)
+            if self._proc.is_alive():
+                self._proc.kill()
+                self._proc.join()
+            self._proc = None
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
 
 
-def _worker_init(loggers: dict[str, str]) -> None:
-    # With spawn-based pools the worker does not inherit the parent's root
-    # logger configuration, so we reapply the same format here. Without this
-    # agent log lines come out unformatted (no timestamp, no level).
+# Set by _worker_init in each pool worker so _run can forward the level map
+# into the agent subprocesses it spawns.
+_loggers: dict[str, str] = {}
+
+
+def _configure_logging(loggers: dict[str, str]) -> None:
+    # Spawn-based child processes don't inherit the parent's root logger
+    # configuration, so every process that emits log records (pool workers and
+    # the agent subprocesses they spawn) must reapply it here. Without this,
+    # agent log lines escape to stderr via logging.lastResort, unformatted.
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler("grading.log", mode="a")],
+        handlers=[logging.FileHandler("results/grading.log", mode="a")],
     )
     for logger_name, level in loggers.items():
-        log = logging.getLogger(logger_name)
-        log.setLevel(level)
+        logging.getLogger(logger_name).setLevel(level)
+
+
+def _worker_init(loggers: dict[str, str]) -> None:
+    global _loggers
+    _loggers = loggers
+    _configure_logging(loggers)
 
 
 def run_one(
@@ -227,6 +345,7 @@ class Grade:
                         "staff_agents",
                         "score",
                         "run_time_seconds",
+                        "timed_out",
                     ]
                 )
                 f.flush()
@@ -274,6 +393,7 @@ class Grade:
                             result.staff_agent_count,
                             result.score,
                             result.run_time_seconds,
+                            result.timed_out,
                         ]
                     )
                     f.flush()
