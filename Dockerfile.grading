@@ -7,26 +7,27 @@
 FROM python:3.14.2-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# setup venv
 WORKDIR /app
-
-COPY common ./common
-COPY grading ./grading
-COPY maps ./maps
-COPY server ./server
 COPY pyproject.toml uv.lock .
-
 RUN uv venv --python 3.14.2 && \
     uv sync && \
     apt-get update && \
     apt-get install -y zip rename
 
+# unzip
+COPY grading ./grading
 COPY unzip.sh .
 RUN chmod a+x unzip.sh
-
 WORKDIR /app/grading/agents
 RUN /app/unzip.sh
 
+# setup code
 WORKDIR /app
+COPY common ./common
+COPY maps ./maps
+COPY server ./server
+
 COPY config.json .
 
 VOLUME /results

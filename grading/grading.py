@@ -1,10 +1,10 @@
-import asyncio
 import csv
 import datetime
 import importlib
 import logging
 import math
 import random
+import threading
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from pathlib import Path
 import tqdm
@@ -43,7 +43,7 @@ def _load_agent_module(base: str, agent_file: str):
     return importlib.import_module(f"{base}.{agent_file.removesuffix('.py')}")
 
 
-async def _run_async(
+def _run(
     config: GradingConfig, seed: int, n_agents: int, map_name: str, agent_to_grade: str
 ) -> RunResult:
     rng = random.Random(seed)
@@ -110,7 +110,7 @@ async def _run_async(
         if not game.bus_is_alive(slot):
             continue
         agent = agents[slot]
-        move = await _get_move(agent, game.game_state, config.agent_timeout_seconds)
+        move = _get_move(agent, game.game_state, config.agent_timeout_seconds)
         game.move(slot, move)
     end = datetime.datetime.now()
 
@@ -143,33 +143,46 @@ def _teamname(agent: BaseAgent) -> str:
     return "?"
 
 
-async def _get_move(
+def _get_move(
     agent: BaseAgent, game_state: GameState, timeout_seconds: float
 ) -> Move:
     # The agent is given a deep copy of GameState so that mutations inside
     # get_move can't corrupt the authoritative state held by the Game.
     game_state_copy = game_state.model_copy(deep=True)
-    move = Move()
 
-    # TODO(alok): it would be nice to disable the gc, but I'm not too
-    # sure about disabling the gc.disable() before awaiting.
-    # It's likely to be ok, but we can disable() the gc if it becomes
-    # an issue.
-    # gc.disable()
-    try:
-        move = await asyncio.wait_for(
-            agent.async_get_move(game_state_copy), timeout_seconds
-        )
-    except TimeoutError:
+    # get_move runs in a daemon thread so we can enforce a hard wall-clock
+    # timeout even when the agent does blocking, CPU-bound work: asyncio's
+    # wait_for can only cancel at an await point, so it cannot interrupt a
+    # synchronous get_move. Python has no safe way to kill a thread, so on
+    # timeout we abandon it (it keeps running until get_move returns on its
+    # own) and fall back to an empty Move. daemon=True keeps an abandoned
+    # thread from blocking process exit.
+    captured_move: Move | None = None
+    captured_error: Exception | None = None
+
+    def run() -> None:
+        nonlocal captured_move, captured_error
+        try:
+            captured_move = agent.get_move(game_state_copy)
+        except Exception as e:
+            captured_error = e
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+
+    if thread.is_alive():
         logger.warning(
             f"slot {agent.slot} ({_teamname(agent)}) timed out on tick {game_state.tick}"
         )
-    except Exception as e:
+        return Move()
+    if captured_error is not None:
         logger.warning(
-            f"slot {agent.slot} ({_teamname(agent)}) raised: {e}", exc_info=True
+            f"slot {agent.slot} ({_teamname(agent)}) raised: {captured_error}",
+            exc_info=captured_error,
         )
-    # gc.enable()
-    return move
+        return Move()
+    return captured_move if captured_move is not None else Move()
 
 
 def _worker_init(loggers: dict[str, str]) -> None:
@@ -190,7 +203,7 @@ def run_one(
     config: GradingConfig, seed: int, n_agents: int, map_name: str, agent_to_grade: str
 ) -> RunResult:
     """Entry point invoked by ProcessPoolExecutor workers."""
-    return asyncio.run(_run_async(config, seed, n_agents, map_name, agent_to_grade))
+    return _run(config, seed, n_agents, map_name, agent_to_grade)
 
 
 class Grade:
